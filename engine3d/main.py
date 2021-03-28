@@ -57,11 +57,12 @@ class Engine(tk.Canvas):
         self.width = width
         self.height = height
         self.aspectratio = self.height/self.width
+        self.tstart = time.time()
 
         # right facing snake, 3 body elements, 20px width
         self.bind_all("<Key>", self.on_key_press)
 
-        self.after(GAME_SPEED, self.perform_actions)
+        # self.after(GAME_SPEED, self.perform_actions)
 
     def drawline(self, x1, y1, x2, y2):
         self.create_line(x1, y1, x2, y2, fill="white")
@@ -80,11 +81,30 @@ class Engine(tk.Canvas):
         # for t in m.tris:
         for i in range(0, len(m.tris)):
             t = m.tris[i]
+
+            tout0 = MultiplyMatrixVector(t.vertices[0], self.matRotZ)
+            tout1 = MultiplyMatrixVector(t.vertices[1], self.matRotZ)
+            tout2 = MultiplyMatrixVector(t.vertices[2], self.matRotZ)
+
+            triRotZ = triangle(
+                tout0.aslist(), tout1.aslist(), tout2.aslist())
+
+            tout0 = MultiplyMatrixVector(triRotZ.vertices[0], self.matRotX)
+            tout1 = MultiplyMatrixVector(triRotZ.vertices[1], self.matRotX)
+            tout2 = MultiplyMatrixVector(triRotZ.vertices[2], self.matRotX)
+
+            triRotZX = triangle(
+                tout0.aslist(), tout1.aslist(), tout2.aslist())
+
+            triRotZX.vertices[0].z += 3.0
+            triRotZX.vertices[1].z += 3.0
+            triRotZX.vertices[2].z += 3.0
+
             # each triangle has 3 vertices
             # transform vertex coords to proj coords
-            tout0 = MultiplyMatrixVector(t.vertices[0], self.matProj)
-            tout1 = MultiplyMatrixVector(t.vertices[1], self.matProj)
-            tout2 = MultiplyMatrixVector(t.vertices[2], self.matProj)
+            tout0 = MultiplyMatrixVector(triRotZX.vertices[0], self.matProj)
+            tout1 = MultiplyMatrixVector(triRotZX.vertices[1], self.matProj)
+            tout2 = MultiplyMatrixVector(triRotZX.vertices[2], self.matProj)
 
             # build a triangle in transformed coords
             triProjected = triangle(
@@ -99,6 +119,7 @@ class Engine(tk.Canvas):
             triProjected.vertices[2].x += 1
             triProjected.vertices[2].y += 1
 
+            # scale into view
             triProjected.vertices[0].x *= 0.5*self.width
             triProjected.vertices[0].y *= 0.5*self.height
             triProjected.vertices[1].x *= 0.5*self.width
@@ -119,7 +140,28 @@ class Engine(tk.Canvas):
         pass
 
     def perform_actions(self):
-        self.draw()
+        # self.draw()
+        self.delete(tk.ALL)
+
+        theta = time.time()-self.tstart
+
+        self.matRotZ = mat4x4()
+        self.matRotZ.mat[0][0] = math.cos(theta*0.5)
+        self.matRotZ.mat[0][1] = math.sin(theta*0.5)
+        self.matRotZ.mat[1][0] = -math.sin(theta*0.5)
+        self.matRotZ.mat[1][1] = math.cos(theta*0.5)
+        self.matRotZ.mat[2][2] = 1.0
+        self.matRotZ.mat[3][3] = 1.0
+
+        self.matRotX = mat4x4()
+        self.matRotX.mat[0][0] = 1.0
+        self.matRotX.mat[1][1] = math.cos(theta*0.5)
+        self.matRotX.mat[1][2] = math.sin(theta*0.5)
+        self.matRotX.mat[2][1] = -math.sin(theta*0.5)
+        self.matRotX.mat[2][2] = math.cos(theta*0.5)
+        self.matRotX.mat[3][3] = 1.0
+
+        self.drawmesh(self.m)
         self.after(GAME_SPEED, self.perform_actions)
 
     def on_key_press(self, e):
@@ -162,12 +204,12 @@ class Engine(tk.Canvas):
         self.matProj.mat[1][1] = fFovRad
         self.matProj.mat[2][2] = fFar/(fFar-fNear)
         self.matProj.mat[3][2] = (-fFar*fNear)/(fFar-fNear)
-        self.matProj.mat[2][2] = 1.0
+        self.matProj.mat[2][3] = 1.0
         self.matProj.mat[3][3] = 0.0
 
         print(self.matProj.mat)
-        m = mesh(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
-        self.drawmesh(m)
+        self.m = mesh(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
+        self.perform_actions()
 
 
 root = tk.Tk()
