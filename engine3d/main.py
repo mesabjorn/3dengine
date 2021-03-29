@@ -2,6 +2,9 @@ import tkinter as tk
 import time
 import math
 
+# inspired on the cpp tutorail from https://www.youtube.com/watch?v=ih20l3pJoeU
+
+
 MOVE_INCREMENT = 20
 moves_per_second = 15
 GAME_SPEED = 1000//moves_per_second
@@ -19,7 +22,10 @@ class vec3d:
 
 class triangle:
     def __init__(self, p1, p2, p3) -> None:
-        self.vertices = [vec3d(*p1), vec3d(*p2), vec3d(*p3)]
+        if(type(p1) == vec3d):
+            self.vertices = [p1, p2, p3]
+        else:
+            self.vertices = [vec3d(*p1), vec3d(*p2), vec3d(*p3)]
 
 
 class mesh:
@@ -59,6 +65,7 @@ class Engine(tk.Canvas):
         self.aspectratio = self.height/self.width
         self.tstart = time.time()
 
+        self.vCamera = vec3d(0.0, 0.0, 0.0)
         # right facing snake, 3 body elements, 20px width
         self.bind_all("<Key>", self.on_key_press)
 
@@ -77,6 +84,32 @@ class Engine(tk.Canvas):
         self.drawline(tri.vertices[2].x, tri.vertices[2].y,
                       tri.vertices[0].x, tri.vertices[0].y)
 
+    def fillTriangle(self, tri):
+        steps = 20
+
+        # sort vertices by y position
+        ys = sorted(tri.vertices, key=lambda v: v.y, reverse=True)
+
+        p1 = ys[0]
+        p2 = ys[1]
+        p3 = ys[2]
+        Q = p2.y
+
+        x0 = p1.x
+        y0 = p1.y
+        for i in range(0, steps+1, 1):
+            t = i/steps
+            # print(t)
+            ax = x0+((p3.x-p1.x)*t)
+            ay = y0+((p3.y-p1.y)*t)
+
+            bx = x0+((p2.x-p1.x)*t)
+            by = y0+((p2.y-p1.y)*t)
+
+            self.create_line(ax, ay, bx, by, fill="#FFF", width=5)
+            if(by < Q):
+                break
+
     def drawmesh(self, m):
         # for t in m.tris:
         for i in range(0, len(m.tris)):
@@ -86,61 +119,96 @@ class Engine(tk.Canvas):
             tout1 = MultiplyMatrixVector(t.vertices[1], self.matRotZ)
             tout2 = MultiplyMatrixVector(t.vertices[2], self.matRotZ)
 
+            # triRotZ = triangle(
+            #     tout0.aslist(), tout1.aslist(), tout2.aslist())
+
             triRotZ = triangle(
-                tout0.aslist(), tout1.aslist(), tout2.aslist())
+                tout0, tout1, tout2)
 
             tout0 = MultiplyMatrixVector(triRotZ.vertices[0], self.matRotX)
             tout1 = MultiplyMatrixVector(triRotZ.vertices[1], self.matRotX)
             tout2 = MultiplyMatrixVector(triRotZ.vertices[2], self.matRotX)
 
             triRotZX = triangle(
-                tout0.aslist(), tout1.aslist(), tout2.aslist())
+                tout0, tout1, tout2)
 
             triRotZX.vertices[0].z += 3.0
             triRotZX.vertices[1].z += 3.0
             triRotZX.vertices[2].z += 3.0
 
-            # each triangle has 3 vertices
-            # transform vertex coords to proj coords
-            tout0 = MultiplyMatrixVector(triRotZX.vertices[0], self.matProj)
-            tout1 = MultiplyMatrixVector(triRotZX.vertices[1], self.matProj)
-            tout2 = MultiplyMatrixVector(triRotZX.vertices[2], self.matProj)
+            # get two lines on the triangle
+            line1 = vec3d(triRotZX.vertices[1].x-triRotZX.vertices[0].x,
+                          triRotZX.vertices[1].y-triRotZX.vertices[0].y,
+                          triRotZX.vertices[1].z-triRotZX.vertices[0].z)
 
-            # build a triangle in transformed coords
-            triProjected = triangle(
-                tout0.aslist(), tout1.aslist(), tout2.aslist())
+            line2 = vec3d(triRotZX.vertices[2].x-triRotZX.vertices[0].x,
+                          triRotZX.vertices[2].y-triRotZX.vertices[0].y,
+                          triRotZX.vertices[2].z-triRotZX.vertices[0].z)
 
-            triProjected.vertices[0].x += 1
-            triProjected.vertices[0].y += 1
+            # cross product between line 1 and 2 => orthogonal vector
+            normal = vec3d(line1.y*line2.z-line1.z*line2.y,
+                           line1.z*line2.x-line1.x*line2.z,
+                           line1.x*line2.y-line1.y*line2.x)
 
-            triProjected.vertices[1].x += 1
-            triProjected.vertices[1].y += 1
+            # normalize normal
+            l = math.sqrt(normal.x*normal.x+normal.y *
+                          normal.y+normal.z*normal.z)
 
-            triProjected.vertices[2].x += 1
-            triProjected.vertices[2].y += 1
+            normal.x /= l
+            normal.y /= l
+            normal.z /= l
 
-            # scale into view
-            triProjected.vertices[0].x *= 0.5*self.width
-            triProjected.vertices[0].y *= 0.5*self.height
-            triProjected.vertices[1].x *= 0.5*self.width
-            triProjected.vertices[1].y *= 0.5*self.height
-            triProjected.vertices[2].x *= 0.5*self.width
-            triProjected.vertices[2].y *= 0.5*self.height
+            dotproduct = normal.x*(triRotZX.vertices[0].x - self.vCamera.x) + normal.y * (
+                triRotZX.vertices[0].y - self.vCamera.y) + normal.z * (triRotZX.vertices[0].z - self.vCamera.z)
+            # if(normal.z < 0):
+            # print(dotproduct)
+            if(dotproduct < 0.0):
+                # each triangle has 3 vertices
+                # transform vertex coords to proj coords 3d->2d
+                tout0 = MultiplyMatrixVector(
+                    triRotZX.vertices[0], self.matProj)
+                tout1 = MultiplyMatrixVector(
+                    triRotZX.vertices[1], self.matProj)
+                tout2 = MultiplyMatrixVector(
+                    triRotZX.vertices[2], self.matProj)
 
-            # triProjected.vertices[0].y = self.height-triProjected.vertices[0].y
-            # triProjected.vertices[1].y = self.height-triProjected.vertices[1].y
-            # triProjected.vertices[2].y = self.height-triProjected.vertices[2].y
+                # build a triangle in transformed coords
+                triProjected = triangle(
+                    tout0, tout1, tout2)
 
-            # and draw it
-            self.drawtriangle(triProjected)
-            # if(i == 0):
-            #     break
+                triProjected.vertices[0].x += 1
+                triProjected.vertices[0].y += 1
+
+                triProjected.vertices[1].x += 1
+                triProjected.vertices[1].y += 1
+
+                triProjected.vertices[2].x += 1
+                triProjected.vertices[2].y += 1
+
+                # scale into view
+                triProjected.vertices[0].x *= 0.5*self.width
+                triProjected.vertices[0].y *= 0.5*self.height
+                triProjected.vertices[1].x *= 0.5*self.width
+                triProjected.vertices[1].y *= 0.5*self.height
+                triProjected.vertices[2].x *= 0.5*self.width
+                triProjected.vertices[2].y *= 0.5*self.height
+
+                # triProjected.vertices[0].y = self.height-triProjected.vertices[0].y
+                # triProjected.vertices[1].y = self.height-triProjected.vertices[1].y
+                # triProjected.vertices[2].y = self.height-triProjected.vertices[2].y
+
+                # and draw it
+                self.drawtriangle(triProjected)
+                self.fillTriangle(triProjected)
+                # if(i == 0):
+                #     break
 
     def draw(self):
         pass
 
     def perform_actions(self):
         # self.draw()
+        t1 = time.time()
         self.delete(tk.ALL)
 
         theta = time.time()-self.tstart
@@ -162,7 +230,11 @@ class Engine(tk.Canvas):
         self.matRotX.mat[3][3] = 1.0
 
         self.drawmesh(self.m)
-        self.after(GAME_SPEED, self.perform_actions)
+        # self.after(GAME_SPEED, self.perform_actions)
+        t2 = time.time()-t1        # frame draw time
+        self.create_text(
+            0, 10, text=f"FPS = {1/max(0.001, t2)}", anchor="w", fill="#fff", font=("TKDefaultFont", 10))
+        self.after(max(1, t2), self.perform_actions)
 
     def on_key_press(self, e):
         new_direction = e.keysym
@@ -219,7 +291,18 @@ root.resizable(False, False)
 board = Engine()
 board.pack()
 
-height = 800
+# board.create_line(100, 100, 200, 200, arrow=tk.LAST, fill="#FFF")
+
+
+a = (100, 200, 100)
+b = (130, 100, 100)
+c = (150, 400, 100)
+t = triangle(a, b, c)
+
+board.drawtriangle(t)
+
+board.fillTriangle(t)
+
 
 # board.drawline(400, height-0, 400, 400)
 # board.drawline(400, 600, 700, 300)
