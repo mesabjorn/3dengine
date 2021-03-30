@@ -84,6 +84,57 @@ class Engine(tk.Canvas):
         self.drawline(tri.vertices[2].x, tri.vertices[2].y,
                       tri.vertices[0].x, tri.vertices[0].y)
 
+    def fillBottomFlatTriangle(self, v1, v2, v3):
+
+        # v1 = tri.vertices[0]
+        # v2 = tri.vertices[1]
+        # v3 = tri.vertices[2]
+
+        invSlope1 = (v3.x - v2.x) / (v3.y-v2.y)
+        invSlope2 = (v3.x - v1.x) / (v3.y-v1.y)
+
+        curx1 = v3.x
+        curx2 = v3.x
+        scanlineY = v3.y
+        while(scanlineY <= v1.y):
+            self.create_line(curx1, scanlineY, curx2,
+                             scanlineY, fill="#FFF", width=5)
+
+            curx1 += invSlope1
+            curx2 += invSlope2
+            scanlineY += 1
+
+    def fillTopFlatTriangle(self, v1, v2, v3):
+        invSlope1 = (v1.x - v2.x) / (v1.y-v2.y)
+        invSlope2 = (v1.x - v3.x) / (v1.y-v3.y)
+
+        curx1 = v1.x
+        curx2 = v1.x
+        scanlineY = v1.y
+        while(scanlineY >= v3.y):
+            self.create_line(curx1, scanlineY, curx2,
+                             scanlineY, fill="#FFF", width=5)
+
+            curx1 -= invSlope1
+            curx2 -= invSlope2
+            scanlineY -= 1
+
+    def fillTriangle_new(self, tri):
+        ys = sorted(tri.vertices, key=lambda v: v.y, reverse=True)
+        v1 = ys[0]
+        v2 = ys[1]
+        v3 = ys[2]
+
+        if(v2.y == v3.y):
+            self.fillTopFlatTriangle(v1, v2, v3)
+        elif(v1.y == v2.y):
+            self.fillBottomFlatTriangle(v1, v2, v3)
+        else:
+            # genericcase!
+            v4 = vec3d(v3.x+(v2.y-v3.y)/(v1.y-v3.y)*(v1.x-v3.x), v2.y, 0)
+            self.fillTopFlatTriangle(v1, v2, v4)
+            self.fillBottomFlatTriangle(v2, v4, v3)
+
     def fillTriangle(self, tri):
         steps = 20
 
@@ -97,7 +148,7 @@ class Engine(tk.Canvas):
 
         x0 = p1.x
         y0 = p1.y
-        for i in range(0, steps+1, 1):
+        for i in range(1, steps+1, 1):
             t = i/steps
             # print(t)
             ax = x0+((p3.x-p1.x)*t)
@@ -107,8 +158,11 @@ class Engine(tk.Canvas):
             by = y0+((p2.y-p1.y)*t)
 
             self.create_line(ax, ay, bx, by, fill="#FFF", width=5)
-            if(by < Q):
-                break
+            # print(by)
+            print(
+                f"board.create_line({int(ax)},{int(ay)},{int(bx)},{int(by)}, fill='white')")
+            # if(ay < Q):
+            #     break
 
     def drawmesh(self, m):
         # for t in m.tris:
@@ -198,8 +252,9 @@ class Engine(tk.Canvas):
                 # triProjected.vertices[2].y = self.height-triProjected.vertices[2].y
 
                 # and draw it
+
+                self.fillTriangle_new(triProjected)
                 self.drawtriangle(triProjected)
-                self.fillTriangle(triProjected)
                 # if(i == 0):
                 #     break
 
@@ -294,21 +349,26 @@ board.pack()
 # board.create_line(100, 100, 200, 200, arrow=tk.LAST, fill="#FFF")
 
 
-a = (100, 200, 100)
-b = (130, 100, 100)
-c = (150, 400, 100)
+# flat top
+# a = (100, 200, 100)
+# b = (50, 100, 100)
+# c = (150, 100, 100)
+# t = triangle(a, b, c)
+# board.drawtriangle(t)
+# board.fillTriangle_new(t)
+
+# a = (300, 200, 100)
+# b = (400, 100, 100)
+# c = (500, 200, 100)
+# t = triangle(a, b, c)
+# board.drawtriangle(t)
+# board.fillTriangle_new(t)
+
+a = (400, 400, 100)
+b = (450, 200, 100)
+c = (700, 100, 100)
 t = triangle(a, b, c)
-
 board.drawtriangle(t)
-
-board.fillTriangle(t)
-
-
-# board.drawline(400, height-0, 400, 400)
-# board.drawline(400, 600, 700, 300)
-
-# m = mat4x4()
-# print(m.mat[3][3])
-
+board.fillTriangle_new(t)
 
 root.mainloop()
