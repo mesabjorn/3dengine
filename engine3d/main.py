@@ -63,77 +63,87 @@ class Engine(tk.Canvas):
         self.width = width
         self.height = height
         self.aspectratio = self.height/self.width
+
         self.tstart = time.time()
 
         self.vCamera = vec3d(0.0, 0.0, 0.0)
+        self.vPointLight = vec3d(0.0, 0.0, -1.0)
+
+        self.fillDetail = 1
+
+        self.text_fps_id = self.create_text(
+            50, 10, text=f"Press any key", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
         # right facing snake, 3 body elements, 20px width
         self.bind_all("<Key>", self.on_key_press)
 
         # self.after(GAME_SPEED, self.perform_actions)
 
-    def drawline(self, x1, y1, x2, y2):
-        self.create_line(x1, y1, x2, y2, fill="white")
+    def drawline(self, x1, y1, x2, y2, **kwargs):
+        self.create_line(x1, y1, x2, y2, **kwargs)
 
-    def drawtriangle(self, tri):
+    def drawtriangle(self, tri, **kwargs):
         # draw a triangle in clockwise fashion
         # each triangle has 3 vertices
-        self.drawline(tri.vertices[0].x, tri.vertices[0].y,
-                      tri.vertices[1].x, tri.vertices[1].y)
+        l = self.drawline(tri.vertices[0].x, tri.vertices[0].y,
+                          tri.vertices[1].x, tri.vertices[1].y, **kwargs)
         self.drawline(tri.vertices[1].x, tri.vertices[1].y,
-                      tri.vertices[2].x, tri.vertices[2].y)
+                      tri.vertices[2].x, tri.vertices[2].y, **kwargs)
         self.drawline(tri.vertices[2].x, tri.vertices[2].y,
-                      tri.vertices[0].x, tri.vertices[0].y)
+                      tri.vertices[0].x, tri.vertices[0].y, **kwargs)
 
-    def fillBottomFlatTriangle(self, v1, v2, v3):
+    def fillBottomFlatTriangle(self, v1, v2, v3, **kwargs):
 
         # v1 = tri.vertices[0]
         # v2 = tri.vertices[1]
         # v3 = tri.vertices[2]
 
-        invSlope1 = (v3.x - v2.x) / (v3.y-v2.y)
-        invSlope2 = (v3.x - v1.x) / (v3.y-v1.y)
+        f = self.fillDetail
+
+        invSlope1 = f*(v3.x - v2.x) / (v3.y-v2.y)
+        invSlope2 = f*(v3.x - v1.x) / (v3.y-v1.y)
 
         curx1 = v3.x
         curx2 = v3.x
         scanlineY = v3.y
         while(scanlineY <= v1.y):
-            self.create_line(curx1, scanlineY, curx2,
-                             scanlineY, fill="#FFF", width=5)
+            self.drawline(curx1, scanlineY, curx2,
+                          scanlineY, width=5, **kwargs)
 
             curx1 += invSlope1
             curx2 += invSlope2
-            scanlineY += 1
+            scanlineY += f
 
-    def fillTopFlatTriangle(self, v1, v2, v3):
-        invSlope1 = (v1.x - v2.x) / (v1.y-v2.y)
-        invSlope2 = (v1.x - v3.x) / (v1.y-v3.y)
+    def fillTopFlatTriangle(self, v1, v2, v3, **kwargs):
+        f = self.fillDetail
+        invSlope1 = f*(v1.x - v2.x) / (v1.y-v2.y)
+        invSlope2 = f*(v1.x - v3.x) / (v1.y-v3.y)
 
         curx1 = v1.x
         curx2 = v1.x
         scanlineY = v1.y
         while(scanlineY >= v3.y):
-            self.create_line(curx1, scanlineY, curx2,
-                             scanlineY, fill="#FFF", width=5)
+            self.drawline(curx1, scanlineY, curx2,
+                          scanlineY, width=5, **kwargs)
 
             curx1 -= invSlope1
             curx2 -= invSlope2
-            scanlineY -= 1
+            scanlineY -= f
 
-    def fillTriangle_new(self, tri):
-        ys = sorted(tri.vertices, key=lambda v: v.y, reverse=True)
-        v1 = ys[0]
+    def fillTriangle_new(self, tri, **kwargs):
+        ys = sorted(tri.vertices, key=lambda v: v.y, reverse=False)
+        v1 = ys[2]
         v2 = ys[1]
-        v3 = ys[2]
+        v3 = ys[0]
 
-        if(v2.y == v3.y):
-            self.fillTopFlatTriangle(v1, v2, v3)
-        elif(v1.y == v2.y):
-            self.fillBottomFlatTriangle(v1, v2, v3)
-        else:
-            # genericcase!
-            v4 = vec3d(v3.x+(v2.y-v3.y)/(v1.y-v3.y)*(v1.x-v3.x), v2.y, 0)
-            self.fillTopFlatTriangle(v1, v2, v4)
-            self.fillBottomFlatTriangle(v2, v4, v3)
+        # if(v2.y == v3.y):
+        #     self.fillTopFlatTriangle(v1, v2, v3)
+        # elif(v1.y == v2.y):
+        #     self.fillBottomFlatTriangle(v1, v2, v3)
+        # else:
+        # genericcase!
+        v4 = vec3d(v3.x+(v2.y-v3.y)/(v1.y-v3.y)*(v1.x-v3.x), v2.y, 0)
+        self.fillTopFlatTriangle(v1, v2, v4,  **kwargs)
+        self.fillBottomFlatTriangle(v2, v4, v3,  **kwargs)
 
     def fillTriangle(self, tri):
         steps = 20
@@ -251,10 +261,24 @@ class Engine(tk.Canvas):
                 # triProjected.vertices[1].y = self.height-triProjected.vertices[1].y
                 # triProjected.vertices[2].y = self.height-triProjected.vertices[2].y
 
-                # and draw it
+                l = math.sqrt(self.vPointLight.x*self.vPointLight.x+self.vPointLight.y *
+                              self.vPointLight.y+self.vPointLight.z*self.vPointLight.z)
+                self.vPointLight.x /= l
+                self.vPointLight.y /= l
+                self.vPointLight.z /= l
 
-                self.fillTriangle_new(triProjected)
-                self.drawtriangle(triProjected)
+                dp = normal.x*self.vPointLight.x+normal.y * \
+                    self.vPointLight.y+normal.z*self.vPointLight.z
+
+                color = vec3d(255, 255, 255)    # red
+                color.x = int(dp*color.x)   # r channel
+                color.y = int(dp*color.y)   # g channel
+                color.z = int(dp*color.z)   # b channel
+                # color = vec3d(255, 255, 255)
+                # and draw it
+                self.fillTriangle_new(
+                    triProjected, fill=f"#{color.x:02x}{color.y:02x}{color.z:02x}")
+                # self.drawtriangle(triProjected)
                 # if(i == 0):
                 #     break
 
@@ -264,6 +288,7 @@ class Engine(tk.Canvas):
     def perform_actions(self):
         # self.draw()
         t1 = time.time()
+
         self.delete(tk.ALL)
 
         theta = time.time()-self.tstart
@@ -287,9 +312,11 @@ class Engine(tk.Canvas):
         self.drawmesh(self.m)
         # self.after(GAME_SPEED, self.perform_actions)
         t2 = time.time()-t1        # frame draw time
-        self.create_text(
-            0, 10, text=f"FPS = {1/max(0.001, t2)}", anchor="w", fill="#fff", font=("TKDefaultFont", 10))
+        self.text_fps_id = self.create_text(
+            0, 10, text=f"fps = {1/t2}", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
+
         self.after(max(1, t2), self.perform_actions)
+        # self.update_idletasks()
 
     def on_key_press(self, e):
         new_direction = e.keysym
@@ -364,11 +391,11 @@ board.pack()
 # board.drawtriangle(t)
 # board.fillTriangle_new(t)
 
-a = (400, 400, 100)
-b = (450, 200, 100)
-c = (700, 100, 100)
-t = triangle(a, b, c)
-board.drawtriangle(t)
-board.fillTriangle_new(t)
+# a = (400, 400, 100)
+# b = (450, 200, 100)
+# c = (700, 100, 100)
+# t = triangle(a, b, c)
+# board.drawtriangle(t)
+# board.fillTriangle_new(t)
 
 root.mainloop()
