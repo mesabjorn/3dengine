@@ -19,6 +19,9 @@ class vec3d:
     def aslist(self):
         return [self.x, self.y, self.z]
 
+    def __str__(self):
+        return f"({self.x}, {self.y}, {self.z})"
+
 
 class triangle:
     def __init__(self, p1, p2, p3) -> None:
@@ -31,7 +34,28 @@ class triangle:
 class mesh:
     def __init__(self, *args):
         self.tris = [*args]
-        print(self.tris)
+        # print(self.tris)
+
+    def loadmodelfromfile(self, file):
+        with open(file, "r") as f:
+            v = []
+            tris = []
+            while(True):
+                l = f.readline().strip()
+                if(len(l) == 0):
+                    break
+
+                if l[0] == "v":
+                    # is vertex
+                    data = list(map(lambda x: float(x), l[2:].split(" ")))
+                    v.append(vec3d(data[0], data[1], data[2]))
+                elif l[0] == "f":
+                    # isface
+                    data = list(map(lambda x: int(x), l[2:].split(" ")))
+                    t = triangle(v[data[0]-1], v[data[1]-1], v[data[2]-1])
+                    tris.append(t)
+
+        self.tris = tris
 
 
 class mat4x4:
@@ -69,12 +93,14 @@ class Engine(tk.Canvas):
         self.vCamera = vec3d(0.0, 0.0, 0.0)
         self.vPointLight = vec3d(0.0, 0.0, -1.0)
 
-        self.fillDetail = 1
+        self.fillDetail = 1     # scanline resolution
 
         self.text_fps_id = self.create_text(
             50, 10, text=f"Press any key", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
         # right facing snake, 3 body elements, 20px width
         self.bind_all("<Key>", self.on_key_press)
+
+        self.setup_viewport()
 
         # self.after(GAME_SPEED, self.perform_actions)
 
@@ -169,8 +195,8 @@ class Engine(tk.Canvas):
 
             self.create_line(ax, ay, bx, by, fill="#FFF", width=5)
             # print(by)
-            print(
-                f"board.create_line({int(ax)},{int(ay)},{int(bx)},{int(by)}, fill='white')")
+            # print(
+            #     f"board.create_line({int(ax)},{int(ay)},{int(bx)},{int(by)}, fill='white')")
             # if(ay < Q):
             #     break
 
@@ -196,9 +222,9 @@ class Engine(tk.Canvas):
             triRotZX = triangle(
                 tout0, tout1, tout2)
 
-            triRotZX.vertices[0].z += 3.0
-            triRotZX.vertices[1].z += 3.0
-            triRotZX.vertices[2].z += 3.0
+            triRotZX.vertices[0].z += 8.0
+            triRotZX.vertices[1].z += 8.0
+            triRotZX.vertices[2].z += 8.0
 
             # get two lines on the triangle
             line1 = vec3d(triRotZX.vertices[1].x-triRotZX.vertices[0].x,
@@ -217,6 +243,8 @@ class Engine(tk.Canvas):
             # normalize normal
             l = math.sqrt(normal.x*normal.x+normal.y *
                           normal.y+normal.z*normal.z)
+
+            # l = max(0.01, l)
 
             normal.x /= l
             normal.y /= l
@@ -270,12 +298,18 @@ class Engine(tk.Canvas):
                 dp = normal.x*self.vPointLight.x+normal.y * \
                     self.vPointLight.y+normal.z*self.vPointLight.z
 
-                color = vec3d(255, 255, 255)    # red
+                color = vec3d(255, 255, 255)
+                color = vec3d(64, 224, 208)
                 color.x = int(dp*color.x)   # r channel
                 color.y = int(dp*color.y)   # g channel
                 color.z = int(dp*color.z)   # b channel
                 # color = vec3d(255, 255, 255)
                 # and draw it
+                # print(color)
+
+                color.x = max(color.x, 0)
+                color.y = max(color.y, 0)
+                color.z = max(color.z, 0)
                 self.fillTriangle_new(
                     triProjected, fill=f"#{color.x:02x}{color.y:02x}{color.z:02x}")
                 # self.drawtriangle(triProjected)
@@ -285,14 +319,28 @@ class Engine(tk.Canvas):
     def draw(self):
         pass
 
+    def setup_viewport(self):
+        fNear = 0.1
+        fFar = 1000.0
+        fFov = 90.0         # degrees FOV
+        # convert to degrees
+        fFovRad = 1.0/math.tan(fFov*0.5/180.0*3.14159)
+
+        self.matProj = mat4x4()
+        self.matProj.mat[0][0] = self.aspectratio*fFovRad
+        self.matProj.mat[1][1] = fFovRad
+        self.matProj.mat[2][2] = fFar/(fFar-fNear)
+        self.matProj.mat[3][2] = (-fFar*fNear)/(fFar-fNear)
+        self.matProj.mat[2][3] = 1.0
+        self.matProj.mat[3][3] = 0.0
+
     def perform_actions(self):
         # self.draw()
         t1 = time.time()
-
         self.delete(tk.ALL)
+        theta = t1-self.tstart
 
-        theta = time.time()-self.tstart
-
+        # compute rotation of Z
         self.matRotZ = mat4x4()
         self.matRotZ.mat[0][0] = math.cos(theta*0.5)
         self.matRotZ.mat[0][1] = math.sin(theta*0.5)
@@ -301,6 +349,7 @@ class Engine(tk.Canvas):
         self.matRotZ.mat[2][2] = 1.0
         self.matRotZ.mat[3][3] = 1.0
 
+        # compute rotation of X
         self.matRotX = mat4x4()
         self.matRotX.mat[0][0] = 1.0
         self.matRotX.mat[1][1] = math.cos(theta*0.5)
@@ -313,16 +362,23 @@ class Engine(tk.Canvas):
         # self.after(GAME_SPEED, self.perform_actions)
         t2 = time.time()-t1        # frame draw time
         self.text_fps_id = self.create_text(
-            0, 10, text=f"fps = {1/t2}", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
+            0, 10, text=f"fps = {1/t2:.3f}", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
 
         self.after(max(1, t2), self.perform_actions)
         # self.update_idletasks()
 
     def on_key_press(self, e):
-        new_direction = e.keysym
-        # self.drawline(100, 100, 200, 200)
-        # t = triangle((100, 50), (100, 100), (150, 100))
-        # t2 = triangle((100, 50), (150, 100), (150, 50))
+        # self.create_cube()
+
+        model = mesh()
+        model.loadmodelfromfile("./models/test.obj")
+        self.addmodeltoscene(model)
+
+    def addmodeltoscene(self, model):
+        self.m = model
+        self.perform_actions()
+
+    def create_cube(self):
 
         # south (facing us)
         t0 = triangle((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 1.0, 0.0))
@@ -348,20 +404,7 @@ class Engine(tk.Canvas):
         t10 = triangle((1.0, 0.0, 1.0), (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))
         t11 = triangle((1.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
 
-        fNear = 0.1
-        fFar = 1000.0
-        fFov = 90.0
-        fFovRad = 1.0/math.tan(fFov*0.5/180.0*3.14159)
-
-        self.matProj = mat4x4()
-        self.matProj.mat[0][0] = self.aspectratio*fFovRad
-        self.matProj.mat[1][1] = fFovRad
-        self.matProj.mat[2][2] = fFar/(fFar-fNear)
-        self.matProj.mat[3][2] = (-fFar*fNear)/(fFar-fNear)
-        self.matProj.mat[2][3] = 1.0
-        self.matProj.mat[3][3] = 0.0
-
-        print(self.matProj.mat)
+        # print(self.matProj.mat)
         self.m = mesh(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
         self.perform_actions()
 
