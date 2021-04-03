@@ -1,13 +1,45 @@
 import tkinter as tk
 import time
 import math
-
+import datetime
+import functools
 # inspired on the cpp tutorail from https://www.youtube.com/watch?v=ih20l3pJoeU
+from copy import deepcopy
+
+from tkinter import PhotoImage
 
 
 MOVE_INCREMENT = 20
 moves_per_second = 15
 GAME_SPEED = 1000//moves_per_second
+
+
+def sort_triangles_by_z(t1, t2):
+    z1 = (t1.vertices[0].z+t1.vertices[1].z+t1.vertices[2].z)/3.0
+    z2 = (t2.vertices[0].z+t2.vertices[1].z+t2.vertices[2].z)/3.0
+    return z2 - z1
+
+
+class Zbuffer:
+    def __init__(self, width, height):
+        self.buffer = []
+        self.width = width
+        self.height = height
+        self.clear()
+
+    def clear(self):
+        for _ in range(0, self.width*self.height):
+            self.buffer.append(math.inf)
+
+    def at(self, x, y):
+        return self.buffer[y*self.width+x]
+
+    def testAndSet(self, x, y, depth):
+        d = self.at(x, y)
+        if(depth < d):
+            d = depth
+            return True
+        return False
 
 
 class vec3d:
@@ -26,17 +58,23 @@ class vec3d:
 class triangle:
     def __init__(self, p1, p2, p3) -> None:
         if(type(p1) == vec3d):
-            self.vertices = [p1, p2, p3]
+            self.vertices = (p1, p2, p3)
         else:
-            self.vertices = [vec3d(*p1), vec3d(*p2), vec3d(*p3)]
+            self.vertices = (vec3d(*p1), vec3d(*p2), vec3d(*p3))
+
+        self.color = vec3d(255, 255, 255)
 
 
 class mesh:
+    ambientColor = vec3d(255, 255, 255)
+
     def __init__(self, *args):
         self.tris = [*args]
+
         # print(self.tris)
 
     def loadmodelfromfile(self, file):
+        # load .obj file
         with open(file, "r") as f:
             v = []
             tris = []
@@ -44,7 +82,6 @@ class mesh:
                 l = f.readline().strip()
                 if(len(l) == 0):
                     break
-
                 if l[0] == "v":
                     # is vertex
                     data = list(map(lambda x: float(x), l[2:].split(" ")))
@@ -54,8 +91,13 @@ class mesh:
                     data = list(map(lambda x: int(x), l[2:].split(" ")))
                     t = triangle(v[data[0]-1], v[data[1]-1], v[data[2]-1])
                     tris.append(t)
-
         self.tris = tris
+
+    def setAmbientColor(self, color: vec3d):
+        self.ambientColor = color
+
+    # def getAmbientColor(self):
+    #     return self.ambientColor
 
 
 class mat4x4:
@@ -81,6 +123,41 @@ def MultiplyMatrixVector(i, matrix):
     return output
 
 
+def vec_add(v1: vec3d, v2: vec3d) -> vec3d:
+    return vec3d(v1.x+v2.x, v1.y+v2.y, v1.z+v2.z)
+
+
+def vec_sub(v1: vec3d, v2: vec3d) -> vec3d:
+    return vec3d(v1.x-v2.x, v1.y-v2.y, v1.z-v2.z)
+
+
+def vec_mul(v1: vec3d, k: float) -> vec3d:
+    return vec3d(v1.x*k, v1.y*k, v1.z*k)
+
+
+def vec_div(v1: vec3d, k: float) -> vec3d:
+    return vec3d(v1.x/k, v1.y/k, v1.z/k)
+
+
+def dot(v1: vec3d, v2: vec3d) -> float:
+    return v1.x*v2.x+v1.y*v2.y+v1.z*v2.z
+
+
+def cross(v1: vec3d, v2: vec3d) -> vec3d:
+    return vec3d(v1.y*v2.z-v1.z*v2.y,
+                 v1.z*v2.x-v1.x*v2.z,
+                 v1.x*v2.y-v1.y*v2.x)
+
+
+def vec_len(v: vec3d) -> vec3d:
+    return math.sqrt(dot(v, v))
+
+
+def vec_normalize(v: vec3d) -> vec3d:
+    l = vec_len(v)
+    return vec3d(v.x/l, v.y/l, v.z/l)
+
+
 class Engine(tk.Canvas):
     def __init__(self, width=800, height=600):
         super().__init__(width=800, height=600, background="black", highlightthickness=0)
@@ -88,7 +165,17 @@ class Engine(tk.Canvas):
         self.height = height
         self.aspectratio = self.height/self.width
 
-        self.tstart = time.time()
+        # half width and height
+        self.hWidth = width*0.5
+        self.hHeight = height*0.5
+
+        # self.img = PhotoImage(width=width, height=height)
+        # self.create_image((width/2, height/2),
+        #                   image=self.img, state="normal")
+
+        # self.ZBuffer = Zbuffer(width, height)
+
+        self.tstart = time.perf_counter()
 
         self.vCamera = vec3d(0.0, 0.0, 0.0)
         self.vPointLight = vec3d(0.0, 0.0, -1.0)
@@ -102,6 +189,9 @@ class Engine(tk.Canvas):
 
         self.setup_viewport()
 
+        self.matRotZ = mat4x4()
+        self.matRotX = mat4x4()
+
         # self.after(GAME_SPEED, self.perform_actions)
 
     def drawline(self, x1, y1, x2, y2, **kwargs):
@@ -110,15 +200,14 @@ class Engine(tk.Canvas):
     def drawtriangle(self, tri, **kwargs):
         # draw a triangle in clockwise fashion
         # each triangle has 3 vertices
-        l = self.drawline(tri.vertices[0].x, tri.vertices[0].y,
-                          tri.vertices[1].x, tri.vertices[1].y, **kwargs)
+        self.drawline(tri.vertices[0].x, tri.vertices[0].y,
+                      tri.vertices[1].x, tri.vertices[1].y, **kwargs)
         self.drawline(tri.vertices[1].x, tri.vertices[1].y,
                       tri.vertices[2].x, tri.vertices[2].y, **kwargs)
         self.drawline(tri.vertices[2].x, tri.vertices[2].y,
                       tri.vertices[0].x, tri.vertices[0].y, **kwargs)
 
     def fillBottomFlatTriangle(self, v1, v2, v3, **kwargs):
-
         # v1 = tri.vertices[0]
         # v2 = tri.vertices[1]
         # v3 = tri.vertices[2]
@@ -133,7 +222,7 @@ class Engine(tk.Canvas):
         scanlineY = v3.y
         while(scanlineY <= v1.y):
             self.drawline(curx1, scanlineY, curx2,
-                          scanlineY, width=5, **kwargs)
+                          scanlineY, width=2, **kwargs)
 
             curx1 += invSlope1
             curx2 += invSlope2
@@ -149,23 +238,15 @@ class Engine(tk.Canvas):
         scanlineY = v1.y
         while(scanlineY >= v3.y):
             self.drawline(curx1, scanlineY, curx2,
-                          scanlineY, width=5, **kwargs)
+                          scanlineY, width=2, **kwargs)
 
             curx1 -= invSlope1
             curx2 -= invSlope2
             scanlineY -= f
 
     def fillTriangle_new(self, tri, **kwargs):
-        ys = sorted(tri.vertices, key=lambda v: v.y, reverse=False)
-        v1 = ys[2]
-        v2 = ys[1]
-        v3 = ys[0]
+        v3, v2, v1 = sorted(tri.vertices, key=lambda v: v.y, reverse=False)
 
-        # if(v2.y == v3.y):
-        #     self.fillTopFlatTriangle(v1, v2, v3)
-        # elif(v1.y == v2.y):
-        #     self.fillBottomFlatTriangle(v1, v2, v3)
-        # else:
         # genericcase!
         v4 = vec3d(v3.x+(v2.y-v3.y)/(v1.y-v3.y)*(v1.x-v3.x), v2.y, 0)
         self.fillTopFlatTriangle(v1, v2, v4,  **kwargs)
@@ -200,17 +281,14 @@ class Engine(tk.Canvas):
             # if(ay < Q):
             #     break
 
-    def drawmesh(self, m):
+    def drawmeshes(self):
         # for t in m.tris:
-        for i in range(0, len(m.tris)):
-            t = m.tris[i]
+        trianglesToRaster = []
+        for t in self.m.tris:
 
             tout0 = MultiplyMatrixVector(t.vertices[0], self.matRotZ)
             tout1 = MultiplyMatrixVector(t.vertices[1], self.matRotZ)
             tout2 = MultiplyMatrixVector(t.vertices[2], self.matRotZ)
-
-            # triRotZ = triangle(
-            #     tout0.aslist(), tout1.aslist(), tout2.aslist())
 
             triRotZ = triangle(
                 tout0, tout1, tout2)
@@ -222,41 +300,43 @@ class Engine(tk.Canvas):
             triRotZX = triangle(
                 tout0, tout1, tout2)
 
-            triRotZX.vertices[0].z += 8.0
-            triRotZX.vertices[1].z += 8.0
-            triRotZX.vertices[2].z += 8.0
+            triRotZX.vertices[0].z += 10.0
+            triRotZX.vertices[1].z += 10.0
+            triRotZX.vertices[2].z += 10.0
 
-            # get two lines on the triangle
-            line1 = vec3d(triRotZX.vertices[1].x-triRotZX.vertices[0].x,
-                          triRotZX.vertices[1].y-triRotZX.vertices[0].y,
-                          triRotZX.vertices[1].z-triRotZX.vertices[0].z)
-
-            line2 = vec3d(triRotZX.vertices[2].x-triRotZX.vertices[0].x,
-                          triRotZX.vertices[2].y-triRotZX.vertices[0].y,
-                          triRotZX.vertices[2].z-triRotZX.vertices[0].z)
+            # get two edges on the triangle
+            line1 = vec_sub(triRotZX.vertices[1], triRotZX.vertices[0])
+            line2 = vec_sub(triRotZX.vertices[2], triRotZX.vertices[0])
 
             # cross product between line 1 and 2 => orthogonal vector
-            normal = vec3d(line1.y*line2.z-line1.z*line2.y,
-                           line1.z*line2.x-line1.x*line2.z,
-                           line1.x*line2.y-line1.y*line2.x)
+            normal = cross(line1, line2)
 
             # normalize normal
-            l = math.sqrt(normal.x*normal.x+normal.y *
-                          normal.y+normal.z*normal.z)
+            normal = vec_normalize(normal)
 
-            # l = max(0.01, l)
+            # get dotproduct between vertex-camera direction and face normal
+            dotproduct = dot(normal, vec_sub(
+                triRotZX.vertices[0], self.vCamera))
 
-            normal.x /= l
-            normal.y /= l
-            normal.z /= l
-
-            dotproduct = normal.x*(triRotZX.vertices[0].x - self.vCamera.x) + normal.y * (
-                triRotZX.vertices[0].y - self.vCamera.y) + normal.z * (triRotZX.vertices[0].z - self.vCamera.z)
-            # if(normal.z < 0):
-            # print(dotproduct)
+            # check if this face should be visualized
             if(dotproduct < 0.0):
                 # each triangle has 3 vertices
                 # transform vertex coords to proj coords 3d->2d
+
+                # compute correct color
+                dp = dot(normal, vec_normalize(self.vPointLight))
+
+                color = deepcopy(self.m.ambientColor)
+
+                color = vec_mul(color, dp)
+                color.x = int(color.x)   # r channel
+                color.y = int(color.y)   # g channel
+                color.z = int(color.z)   # b channel
+
+                color.x = max(color.x, 0)
+                color.y = max(color.y, 0)
+                color.z = max(color.z, 0)
+
                 tout0 = MultiplyMatrixVector(
                     triRotZX.vertices[0], self.matProj)
                 tout1 = MultiplyMatrixVector(
@@ -278,43 +358,24 @@ class Engine(tk.Canvas):
                 triProjected.vertices[2].y += 1
 
                 # scale into view
-                triProjected.vertices[0].x *= 0.5*self.width
-                triProjected.vertices[0].y *= 0.5*self.height
-                triProjected.vertices[1].x *= 0.5*self.width
-                triProjected.vertices[1].y *= 0.5*self.height
-                triProjected.vertices[2].x *= 0.5*self.width
-                triProjected.vertices[2].y *= 0.5*self.height
+                triProjected.vertices[0].x *= self.hWidth
+                triProjected.vertices[0].y *= self.hHeight
+                triProjected.vertices[1].x *= self.hWidth
+                triProjected.vertices[1].y *= self.hHeight
+                triProjected.vertices[2].x *= self.hWidth
+                triProjected.vertices[2].y *= self.hHeight
 
-                # triProjected.vertices[0].y = self.height-triProjected.vertices[0].y
-                # triProjected.vertices[1].y = self.height-triProjected.vertices[1].y
-                # triProjected.vertices[2].y = self.height-triProjected.vertices[2].y
+                triProjected.color = color
+                trianglesToRaster.append(triProjected)
 
-                l = math.sqrt(self.vPointLight.x*self.vPointLight.x+self.vPointLight.y *
-                              self.vPointLight.y+self.vPointLight.z*self.vPointLight.z)
-                self.vPointLight.x /= l
-                self.vPointLight.y /= l
-                self.vPointLight.z /= l
+        # sort triangles in z axis for painters rendering
+        trianglesToRaster = sorted(
+            trianglesToRaster, key=functools.cmp_to_key(sort_triangles_by_z))
 
-                dp = normal.x*self.vPointLight.x+normal.y * \
-                    self.vPointLight.y+normal.z*self.vPointLight.z
+        for t in trianglesToRaster:
 
-                color = vec3d(255, 255, 255)
-                color = vec3d(64, 224, 208)
-                color.x = int(dp*color.x)   # r channel
-                color.y = int(dp*color.y)   # g channel
-                color.z = int(dp*color.z)   # b channel
-                # color = vec3d(255, 255, 255)
-                # and draw it
-                # print(color)
-
-                color.x = max(color.x, 0)
-                color.y = max(color.y, 0)
-                color.z = max(color.z, 0)
-                self.fillTriangle_new(
-                    triProjected, fill=f"#{color.x:02x}{color.y:02x}{color.z:02x}")
-                # self.drawtriangle(triProjected)
-                # if(i == 0):
-                #     break
+            self.create_polygon(t.vertices[0].x, t.vertices[0].y, t.vertices[1].x,
+                                t.vertices[1].y, t.vertices[2].x, t.vertices[2].y, fill=f"#{t.color.x:02x}{t.color.y:02x}{t.color.z:02x}", tag="triangle")
 
     def draw(self):
         pass
@@ -336,12 +397,11 @@ class Engine(tk.Canvas):
 
     def perform_actions(self):
         # self.draw()
-        t1 = time.time()
+        t1 = time.perf_counter()
         self.delete(tk.ALL)
-        theta = t1-self.tstart
+        theta = (t1-self.tstart)
 
         # compute rotation of Z
-        self.matRotZ = mat4x4()
         self.matRotZ.mat[0][0] = math.cos(theta*0.5)
         self.matRotZ.mat[0][1] = math.sin(theta*0.5)
         self.matRotZ.mat[1][0] = -math.sin(theta*0.5)
@@ -350,7 +410,6 @@ class Engine(tk.Canvas):
         self.matRotZ.mat[3][3] = 1.0
 
         # compute rotation of X
-        self.matRotX = mat4x4()
         self.matRotX.mat[0][0] = 1.0
         self.matRotX.mat[1][1] = math.cos(theta*0.5)
         self.matRotX.mat[1][2] = math.sin(theta*0.5)
@@ -358,20 +417,27 @@ class Engine(tk.Canvas):
         self.matRotX.mat[2][2] = math.cos(theta*0.5)
         self.matRotX.mat[3][3] = 1.0
 
-        self.drawmesh(self.m)
-        # self.after(GAME_SPEED, self.perform_actions)
-        t2 = time.time()-t1        # frame draw time
+        self.drawmeshes()
+
+        t2 = time.perf_counter()-t1             # frame draw time
         self.text_fps_id = self.create_text(
             0, 10, text=f"fps = {1/t2:.3f}", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
 
-        self.after(max(1, t2), self.perform_actions)
+        self.after(max(1, int(t2*1000)), self.perform_actions)
         # self.update_idletasks()
 
     def on_key_press(self, e):
-        # self.create_cube()
+        # model = self.create_cube()
 
         model = mesh()
-        model.loadmodelfromfile("./models/test.obj")
+        model.loadmodelfromfile("./engine3d/models/test.obj")
+        model.ambientColor = vec3d(64, 224, 208)
+
+        # self.addmodeltoscene(model)
+        # for x in range(4 * self.width):
+        #     y = int(self.height/2 + self.height/4 * math.sin(x/80.0))
+        #     self.img.put("#ffffff", (x//4, y))
+
         self.addmodeltoscene(model)
 
     def addmodeltoscene(self, model):
@@ -405,8 +471,8 @@ class Engine(tk.Canvas):
         t11 = triangle((1.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
 
         # print(self.matProj.mat)
-        self.m = mesh(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
-        self.perform_actions()
+        return mesh(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
+        # self.perform_actions()
 
 
 root = tk.Tk()
@@ -416,8 +482,9 @@ root.resizable(False, False)
 board = Engine()
 board.pack()
 
-# board.create_line(100, 100, 200, 200, arrow=tk.LAST, fill="#FFF")
+# board.drawline(100, 100, 200, 200)
 
+# board.create_line(100, 100, 200, 200, arrow=tk.LAST, fill="#FFF")
 
 # flat top
 # a = (100, 200, 100)
@@ -429,7 +496,7 @@ board.pack()
 
 # a = (300, 200, 100)
 # b = (400, 100, 100)
-# c = (500, 200, 100)
+# c = (500, 250, 100)
 # t = triangle(a, b, c)
 # board.drawtriangle(t)
 # board.fillTriangle_new(t)
