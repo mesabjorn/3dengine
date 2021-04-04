@@ -317,6 +317,8 @@ class Engine(tk.Canvas):
         self.vCamera = vec3d(0.0, 0.0, 0.0)
         self.vLookDir = vec3d(0.0, 0.0, 0.0)
 
+        self.yaw = 0.0
+
         self.vPointLight = vec3d(0.0, 0.0, -1.0)
 
         self.fillDetail = 5     # scanline resolution
@@ -561,8 +563,12 @@ class Engine(tk.Canvas):
         self.matWorld = matmatmul(self.matRotY, self.matRotZ)
         self.matWorld = matmatmul(self.matWorld, self.matTrans)
 
-        self.vLookDir = vec3d(0, 0, 1)
-        vUp = vec3d(0, 1, 0)
+        # self.vLookDir = vec3d(0, 0, 1)
+        vUp = vec3d(0, -1, 0)
+        # vTarget = vec_add(self.vCamera, self.vLookDir)
+        vTarget = vec3d(0, 0, 1)
+        matCameraRot = makeMatRotationY(self.yaw)
+        self.vLookDir = MultiplyMatrixVector(vTarget, matCameraRot)
         vTarget = vec_add(self.vCamera, self.vLookDir)
 
         matCamera = matPointAt(self.vCamera, vTarget, vUp)
@@ -582,26 +588,49 @@ class Engine(tk.Canvas):
         print(e)
         if(e.keycode == 13):
             model = mesh()
-            model.loadmodelfromfile("./engine3d/models/axis.obj")
+            model.loadmodelfromfile("./engine3d/models/suzanne.obj")
             model.ambientColor = vec3d(64, 224, 208)
             self.addmodeltoscene(model)
             return
 
-        if(e.keycode == 87):
-            self.vCamera.z += 1
-        elif(e.keycode == 83):
-            self.vCamera.z -= 1
-        elif(e.keycode == 68):
-            # d
-            self.vCamera.x += 1
-        elif(e.keycode == 65):
-            # a
-            self.vCamera.x -= 1
+        vForward = vec_mul(self.vLookDir, 1.0)
 
-        # self.addmodeltoscene(model)
-        # for x in range(4 * self.width):
-        #     y = int(self.height/2 + self.height/4 * math.sin(x/80.0))
-        #     self.img.put("#ffffff", (x//4, y))
+        if(e.keycode == 40):
+            # key down
+            self.vCamera.y -= 1
+        elif(e.keycode == 38):
+            # key up
+            self.vCamera.y += 1
+        elif(e.keycode == 39):
+            # key right
+            self.vCamera.x -= 1
+        elif(e.keycode == 37):
+            # key left
+            self.vCamera.x += 1
+        elif(e.keycode == 68):
+            # D
+            self.yaw += .1
+        elif(e.keycode == 65):
+            # A
+            self.yaw -= .1
+
+        elif(e.keycode == 87):
+            # W
+            self.vCamera = vec_add(self.vCamera, vForward)
+
+        elif(e.keycode == 83):
+            # S
+            self.vCamera = vec_sub(self.vCamera, vForward)
+
+        elif(e.char == "r"):
+            # reset
+            self.vCamera = vec3d(0, 0, 0)
+            self.yaw = 0
+
+            # self.addmodeltoscene(model)
+            # for x in range(4 * self.width):
+            #     y = int(self.height/2 + self.height/4 * math.sin(x/80.0))
+            #     self.img.put("#ffffff", (x//4, y))
 
     def addmodeltoscene(self, model):
         self.m = model
