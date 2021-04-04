@@ -1,17 +1,12 @@
 import tkinter as tk
 import time
 import math
-import datetime
+# import datetime
 import functools
+from copy import deepcopy, copy
+# from tkinter import PhotoImage
+
 # inspired on the cpp tutorail from https://www.youtube.com/watch?v=ih20l3pJoeU
-from copy import deepcopy
-
-from tkinter import PhotoImage
-
-
-MOVE_INCREMENT = 20
-moves_per_second = 15
-GAME_SPEED = 1000//moves_per_second
 
 
 def sort_triangles_by_z(t1, t2):
@@ -43,10 +38,11 @@ class Zbuffer:
 
 
 class vec3d:
-    def __init__(self, x, y, z) -> None:
+    def __init__(self, x, y, z, w=None) -> None:
         self.x = x
         self.y = y
         self.z = z
+        self.w = w if w else 1.0
 
     def aslist(self):
         return [self.x, self.y, self.z]
@@ -58,9 +54,9 @@ class vec3d:
 class triangle:
     def __init__(self, p1, p2, p3) -> None:
         if(type(p1) == vec3d):
-            self.vertices = (p1, p2, p3)
+            self.vertices = [p1, p2, p3]
         else:
-            self.vertices = (vec3d(*p1), vec3d(*p2), vec3d(*p3))
+            self.vertices = [vec3d(*p1), vec3d(*p2), vec3d(*p3)]
 
         self.color = vec3d(255, 255, 255)
 
@@ -91,6 +87,8 @@ class mesh:
                     data = list(map(lambda x: int(x), l[2:].split(" ")))
                     t = triangle(v[data[0]-1], v[data[1]-1], v[data[2]-1])
                     tris.append(t)
+        print(
+            f"Loaded model {file} with {len(tris)} faces and {len(v)} vertices.")
         self.tris = tris
 
     def setAmbientColor(self, color: vec3d):
@@ -106,21 +104,151 @@ class mat4x4:
                     [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
 
 
-def MultiplyMatrixVector(i, matrix):
-    output = vec3d(0.0, 0.0, 0.0)
+def matmatmul(m1: mat4x4, m2: mat4x4) -> mat4x4:
+    mout = mat4x4()
+    for c in range(0, 4):
+        for r in range(0, 4):
+            mout.mat[r][c] = m1.mat[r][0] * m2.mat[0][c] + m1.mat[r][1] * \
+                m2.mat[1][c] + m1.mat[r][2] * \
+                m2.mat[2][c] + m1.mat[r][3] * m2.mat[3][c]
+    return mout
+
+
+def matPointAt(pos: vec3d, target: vec3d, up: vec3d) -> mat4x4:
+    m = mat4x4()
+    newForward = vec_normalize(vec_sub(target, pos))
+
+    a = vec_mul(newForward, dot(up, newForward))
+    newup = vec_normalize(vec_sub(up, a))
+
+    newRight = cross(newup, newForward)
+
+    matrix = mat4x4()
+    matrix.mat[0][0] = newRight.x
+    matrix.mat[1][0] = newup.x
+    matrix.mat[2][0] = newForward.x
+    matrix.mat[3][0] = pos.x
+
+    matrix.mat[0][1] = newRight.y
+    matrix.mat[1][1] = newup.y
+    matrix.mat[2][1] = newForward.y
+    matrix.mat[3][1] = pos.y
+
+    matrix.mat[0][2] = newRight.z
+    matrix.mat[1][2] = newup.z
+    matrix.mat[2][2] = newForward.z
+    matrix.mat[3][2] = pos.z
+
+    matrix.mat[0][3] = 0
+    matrix.mat[1][3] = 0
+    matrix.mat[2][3] = 0
+    matrix.mat[3][3] = 1
+
+    return matrix
+
+
+def matQuickInverse(m: mat4x4) -> mat4x4:
+    matrix = mat4x4()
+    matrix.mat[0][0] = m.mat[0][0]
+    matrix.mat[1][0] = m.mat[0][1]
+    matrix.mat[2][0] = m.mat[0][2]
+
+    matrix.mat[0][1] = m.mat[1][0]
+    matrix.mat[1][1] = m.mat[1][1]
+    matrix.mat[2][1] = m.mat[1][2]
+
+    matrix.mat[0][2] = m.mat[2][0]
+    matrix.mat[1][2] = m.mat[2][1]
+    matrix.mat[2][2] = m.mat[2][2]
+
+    matrix.mat[0][3] = 0.0
+    matrix.mat[1][3] = 0.0
+    matrix.mat[2][3] = 0.0
+
+    matrix.mat[3][0] = -(m.mat[3][0]*matrix.mat[0][0] + m.mat[3]
+                         [1]*matrix.mat[1][0] + m.mat[3][2]*matrix.mat[2][0])
+    matrix.mat[3][1] = -(m.mat[3][0]*matrix.mat[0][1] + m.mat[3]
+                         [1]*matrix.mat[1][1] + m.mat[3][2]*matrix.mat[2][1])
+    matrix.mat[3][2] = -(m.mat[3][0]*matrix.mat[0][2] + m.mat[3]
+                         [1]*matrix.mat[1][2] + m.mat[3][2]*matrix.mat[2][2])
+    matrix.mat[3][3] = 1.0
+
+    return matrix
+
+
+def MultiplyMatrixVector(i: vec3d, matrix: mat4x4) -> vec3d:
+    output = vec3d(0.0, 0.0, 0.0, 0.0)
     m = matrix.mat
-    output.x = i.x * m[0][0] + i.y * m[1][0] + i.z*m[2][0] + m[3][0]
-    output.y = i.x * m[0][1] + i.y * m[1][1] + i.z*m[2][1] + m[3][1]
-    output.z = i.x * m[0][2] + i.y * m[1][2] + i.z*m[2][2] + m[3][2]
+    output.x = i.x * m[0][0] + i.y * m[1][0] + i.z * m[2][0] + i.w*m[3][0]
+    output.y = i.x * m[0][1] + i.y * m[1][1] + i.z * m[2][1] + i.w*m[3][1]
+    output.z = i.x * m[0][2] + i.y * m[1][2] + i.z * m[2][2] + i.w*m[3][2]
+    output.w = i.x * m[0][3] + i.y * m[1][3] + i.z * m[2][3] + i.w*m[3][3]
 
-    w = i.x * m[0][3] + i.y * m[1][3] + i.z * m[2][3] + m[3][3]
-
-    if(w != 0):
-        output.x /= w
-        output.y /= w
-        output.z /= w
+    # if(w != 0):
+    #     output.x /= w
+    #     output.y /= w
+    #     output.z /= w
 
     return output
+
+
+def makeMatRotationY(angleRad: float) -> mat4x4:
+    m = mat4x4()
+    m.mat[0][0] = math.cos(angleRad)
+    m.mat[0][2] = math.sin(angleRad)
+    m.mat[2][0] = -math.sin(angleRad)
+    m.mat[1][1] = 1.0
+    m.mat[2][2] = math.cos(angleRad)
+    m.mat[3][3] = 1.0
+    return m
+
+
+def makeMatRotationZ(angleRad: float) -> mat4x4:
+    m = mat4x4()
+    m.mat[0][0] = math.cos(angleRad)
+    m.mat[0][1] = math.sin(angleRad)
+    m.mat[1][0] = -math.sin(angleRad)
+    m.mat[1][1] = math.cos(angleRad)
+    m.mat[2][2] = 1.0
+    m.mat[3][3] = 1.0
+    return m
+
+
+def makeMatRotationX(angleRad: float) -> mat4x4:
+    m = mat4x4()
+    m.mat[0][0] = 1.0
+    m.mat[1][1] = math.cos(angleRad)
+    m.mat[1][2] = math.sin(angleRad)
+    m.mat[2][1] = -math.sin(angleRad)
+    m.mat[2][2] = math.cos(angleRad)
+    m.mat[3][3] = 1.0
+    return m
+
+
+def makeMatTranslation(x, y, z) -> mat4x4:
+    m = mat4x4()
+    m.mat[0][0] = 1.0
+    m.mat[1][1] = 1.0
+    m.mat[2][2] = 1.0
+    m.mat[3][3] = 1.0
+    m.mat[3][0] = x
+    m.mat[3][1] = y
+    m.mat[3][2] = z
+    return m
+
+
+def makeMatProjection(fFov, aspectratio, fNear, fFar) -> mat4x4:
+    # convert to degrees
+    fFovRad = 1.0/math.tan(fFov*0.5/180.0*3.14159)
+
+    m = mat4x4()
+    m.mat[0][0] = aspectratio*fFovRad
+    m.mat[1][1] = fFovRad
+    m.mat[2][2] = fFar/(fFar-fNear)
+    m.mat[3][2] = (-fFar*fNear)/(fFar-fNear)
+    m.mat[2][3] = 1.0
+    m.mat[3][3] = 0.0
+    return m
 
 
 def vec_add(v1: vec3d, v2: vec3d) -> vec3d:
@@ -158,6 +286,15 @@ def vec_normalize(v: vec3d) -> vec3d:
     return vec3d(v.x/l, v.y/l, v.z/l)
 
 
+def makeMatIdentity() -> mat4x4:
+    m = mat4x4()
+    m.mat[0][0] = 1.0
+    m.mat[1][1] = 1.0
+    m.mat[2][2] = 1.0
+    m.mat[3][3] = 1.0
+    return m
+
+
 class Engine(tk.Canvas):
     def __init__(self, width=800, height=600):
         super().__init__(width=800, height=600, background="black", highlightthickness=0)
@@ -178,12 +315,14 @@ class Engine(tk.Canvas):
         self.tstart = time.perf_counter()
 
         self.vCamera = vec3d(0.0, 0.0, 0.0)
+        self.vLookDir = vec3d(0.0, 0.0, 0.0)
+
         self.vPointLight = vec3d(0.0, 0.0, -1.0)
 
-        self.fillDetail = 1     # scanline resolution
+        self.fillDetail = 5     # scanline resolution
 
         self.text_fps_id = self.create_text(
-            50, 10, text=f"Press any key", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
+            50, 10, text=f"Press enter key to start", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
         # right facing snake, 3 body elements, 20px width
         self.bind_all("<Key>", self.on_key_press)
 
@@ -222,7 +361,7 @@ class Engine(tk.Canvas):
         scanlineY = v3.y
         while(scanlineY <= v1.y):
             self.drawline(curx1, scanlineY, curx2,
-                          scanlineY, width=2, **kwargs)
+                          scanlineY, width=f, **kwargs)
 
             curx1 += invSlope1
             curx2 += invSlope2
@@ -238,7 +377,7 @@ class Engine(tk.Canvas):
         scanlineY = v1.y
         while(scanlineY >= v3.y):
             self.drawline(curx1, scanlineY, curx2,
-                          scanlineY, width=2, **kwargs)
+                          scanlineY, width=f, **kwargs)
 
             curx1 -= invSlope1
             curx2 -= invSlope2
@@ -285,48 +424,56 @@ class Engine(tk.Canvas):
         # for t in m.tris:
         trianglesToRaster = []
         for t in self.m.tris:
+            triTransformed = triangle([0, 0, 0], [0, 0, 0], [0, 0, 0])
 
-            tout0 = MultiplyMatrixVector(t.vertices[0], self.matRotZ)
-            tout1 = MultiplyMatrixVector(t.vertices[1], self.matRotZ)
-            tout2 = MultiplyMatrixVector(t.vertices[2], self.matRotZ)
+            triTransformed.vertices[0] = MultiplyMatrixVector(
+                t.vertices[0], self.matWorld)
+            triTransformed.vertices[1] = MultiplyMatrixVector(
+                t.vertices[1], self.matWorld)
+            triTransformed.vertices[2] = MultiplyMatrixVector(
+                t.vertices[2], self.matWorld)
 
-            triRotZ = triangle(
-                tout0, tout1, tout2)
+            # tout0 = MultiplyMatrixVector(t.vertices[0], self.matRotZ)
+            # tout1 = MultiplyMatrixVector(t.vertices[1], self.matRotZ)
+            # tout2 = MultiplyMatrixVector(t.vertices[2], self.matRotZ)
 
-            tout0 = MultiplyMatrixVector(triRotZ.vertices[0], self.matRotX)
-            tout1 = MultiplyMatrixVector(triRotZ.vertices[1], self.matRotX)
-            tout2 = MultiplyMatrixVector(triRotZ.vertices[2], self.matRotX)
+            # triRotZ = triangle(
+            #     tout0, tout1, tout2)
 
-            triRotZX = triangle(
-                tout0, tout1, tout2)
+            # tout0 = MultiplyMatrixVector(triRotZ.vertices[0], self.matRotX)
+            # tout1 = MultiplyMatrixVector(triRotZ.vertices[1], self.matRotX)
+            # tout2 = MultiplyMatrixVector(triRotZ.vertices[2], self.matRotX)
 
-            triRotZX.vertices[0].z += 10.0
-            triRotZX.vertices[1].z += 10.0
-            triRotZX.vertices[2].z += 10.0
+            # triRotZX = triangle(
+            #     tout0, tout1, tout2)
+
+            # triRotZX.vertices[0].z += 20.0
+            # triRotZX.vertices[1].z += 20.0
+            # triRotZX.vertices[2].z += 20.0
 
             # get two edges on the triangle
-            line1 = vec_sub(triRotZX.vertices[1], triRotZX.vertices[0])
-            line2 = vec_sub(triRotZX.vertices[2], triRotZX.vertices[0])
+            line1 = vec_sub(
+                triTransformed.vertices[1], triTransformed.vertices[0])
+            line2 = vec_sub(
+                triTransformed.vertices[2], triTransformed.vertices[0])
 
             # cross product between line 1 and 2 => orthogonal vector
             normal = cross(line1, line2)
-
-            # normalize normal
             normal = vec_normalize(normal)
 
-            # get dotproduct between vertex-camera direction and face normal
-            dotproduct = dot(normal, vec_sub(
-                triRotZX.vertices[0], self.vCamera))
+            # get ray from triangle to camera
+            vCameraRay = vec_sub(triTransformed.vertices[0], self.vCamera)
 
             # check if this face should be visualized
-            if(dotproduct < 0.0):
+            if(dot(normal, vCameraRay) < 0.0):
+                triProjected = triangle((0, 0, 0), (0, 0, 0), (0, 0, 0))
                 # each triangle has 3 vertices
                 # transform vertex coords to proj coords 3d->2d
 
                 # compute correct color
                 dp = dot(normal, vec_normalize(self.vPointLight))
 
-                color = deepcopy(self.m.ambientColor)
+                color = copy(self.m.ambientColor)
 
                 color = vec_mul(color, dp)
                 color.x = int(color.x)   # r channel
@@ -336,26 +483,39 @@ class Engine(tk.Canvas):
                 color.x = max(color.x, 0)
                 color.y = max(color.y, 0)
                 color.z = max(color.z, 0)
+                triProjected.color = color
 
-                tout0 = MultiplyMatrixVector(
-                    triRotZX.vertices[0], self.matProj)
-                tout1 = MultiplyMatrixVector(
-                    triRotZX.vertices[1], self.matProj)
-                tout2 = MultiplyMatrixVector(
-                    triRotZX.vertices[2], self.matProj)
+                triViewed = triangle((0, 0, 0), (0, 0, 0), (0, 0, 0))
 
-                # build a triangle in transformed coords
-                triProjected = triangle(
-                    tout0, tout1, tout2)
+                triViewed.vertices[0] = MultiplyMatrixVector(
+                    triTransformed.vertices[0], self.matView)
+                triViewed.vertices[1] = MultiplyMatrixVector(
+                    triTransformed.vertices[1], self.matView)
+                triViewed.vertices[2] = MultiplyMatrixVector(
+                    triTransformed.vertices[2], self.matView)
+                # project triangle to 2d space
+                triProjected.vertices[0] = MultiplyMatrixVector(
+                    triViewed.vertices[0], self.matProj)
+                triProjected.vertices[1] = MultiplyMatrixVector(
+                    triViewed.vertices[1], self.matProj)
+                triProjected.vertices[2] = MultiplyMatrixVector(
+                    triViewed.vertices[2], self.matProj)
 
-                triProjected.vertices[0].x += 1
-                triProjected.vertices[0].y += 1
+                triProjected.vertices[0] = vec_div(
+                    triProjected.vertices[0], triProjected.vertices[0].w)
+                triProjected.vertices[1] = vec_div(
+                    triProjected.vertices[1], triProjected.vertices[1].w)
+                triProjected.vertices[2] = vec_div(
+                    triProjected.vertices[2], triProjected.vertices[2].w)
 
-                triProjected.vertices[1].x += 1
-                triProjected.vertices[1].y += 1
-
-                triProjected.vertices[2].x += 1
-                triProjected.vertices[2].y += 1
+                # put it into view
+                vOffsetView = vec3d(1, 1, 0)
+                triProjected.vertices[0] = vec_add(
+                    triProjected.vertices[0], vOffsetView)
+                triProjected.vertices[1] = vec_add(
+                    triProjected.vertices[1], vOffsetView)
+                triProjected.vertices[2] = vec_add(
+                    triProjected.vertices[2], vOffsetView)
 
                 # scale into view
                 triProjected.vertices[0].x *= self.hWidth
@@ -365,7 +525,6 @@ class Engine(tk.Canvas):
                 triProjected.vertices[2].x *= self.hWidth
                 triProjected.vertices[2].y *= self.hHeight
 
-                triProjected.color = color
                 trianglesToRaster.append(triProjected)
 
         # sort triangles in z axis for painters rendering
@@ -373,7 +532,6 @@ class Engine(tk.Canvas):
             trianglesToRaster, key=functools.cmp_to_key(sort_triangles_by_z))
 
         for t in trianglesToRaster:
-
             self.create_polygon(t.vertices[0].x, t.vertices[0].y, t.vertices[1].x,
                                 t.vertices[1].y, t.vertices[2].x, t.vertices[2].y, fill=f"#{t.color.x:02x}{t.color.y:02x}{t.color.z:02x}", tag="triangle")
 
@@ -384,61 +542,66 @@ class Engine(tk.Canvas):
         fNear = 0.1
         fFar = 1000.0
         fFov = 90.0         # degrees FOV
-        # convert to degrees
-        fFovRad = 1.0/math.tan(fFov*0.5/180.0*3.14159)
-
-        self.matProj = mat4x4()
-        self.matProj.mat[0][0] = self.aspectratio*fFovRad
-        self.matProj.mat[1][1] = fFovRad
-        self.matProj.mat[2][2] = fFar/(fFar-fNear)
-        self.matProj.mat[3][2] = (-fFar*fNear)/(fFar-fNear)
-        self.matProj.mat[2][3] = 1.0
-        self.matProj.mat[3][3] = 0.0
+        self.matProj = makeMatProjection(fFov, self.aspectratio, fNear, fFar)
 
     def perform_actions(self):
         # self.draw()
         t1 = time.perf_counter()
         self.delete(tk.ALL)
-        theta = (t1-self.tstart)
+        theta = 0  # t1*0.5
 
-        # compute rotation of Z
-        self.matRotZ.mat[0][0] = math.cos(theta*0.5)
-        self.matRotZ.mat[0][1] = math.sin(theta*0.5)
-        self.matRotZ.mat[1][0] = -math.sin(theta*0.5)
-        self.matRotZ.mat[1][1] = math.cos(theta*0.5)
-        self.matRotZ.mat[2][2] = 1.0
-        self.matRotZ.mat[3][3] = 1.0
+        self.matRotZ = makeMatRotationZ(theta)
+        self.matRotX = makeMatRotationX(theta)
+        self.matRotY = makeMatRotationY(theta)
 
-        # compute rotation of X
-        self.matRotX.mat[0][0] = 1.0
-        self.matRotX.mat[1][1] = math.cos(theta*0.5)
-        self.matRotX.mat[1][2] = math.sin(theta*0.5)
-        self.matRotX.mat[2][1] = -math.sin(theta*0.5)
-        self.matRotX.mat[2][2] = math.cos(theta*0.5)
-        self.matRotX.mat[3][3] = 1.0
+        self.matTrans = makeMatTranslation(0, 0, 5.0)
+
+        self.matWorld = makeMatIdentity()
+        self.matWorld = matmatmul(self.matRotY, self.matRotY)
+        self.matWorld = matmatmul(self.matRotY, self.matRotZ)
+        self.matWorld = matmatmul(self.matWorld, self.matTrans)
+
+        self.vLookDir = vec3d(0, 0, 1)
+        vUp = vec3d(0, 1, 0)
+        vTarget = vec_add(self.vCamera, self.vLookDir)
+
+        matCamera = matPointAt(self.vCamera, vTarget, vUp)
+        self.matView = matQuickInverse(matCamera)
 
         self.drawmeshes()
 
         t2 = time.perf_counter()-t1             # frame draw time
-        self.text_fps_id = self.create_text(
-            0, 10, text=f"fps = {1/t2:.3f}", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
 
+        self.text_fps_id = self.create_text(
+            0, 10, text=f"{1/t2:3.0f} fps", anchor="w", fill="#fff", font=("TKDefaultFont", 12))
         self.after(max(1, int(t2*1000)), self.perform_actions)
         # self.update_idletasks()
 
     def on_key_press(self, e):
         # model = self.create_cube()
+        print(e)
+        if(e.keycode == 13):
+            model = mesh()
+            model.loadmodelfromfile("./engine3d/models/axis.obj")
+            model.ambientColor = vec3d(64, 224, 208)
+            self.addmodeltoscene(model)
+            return
 
-        model = mesh()
-        model.loadmodelfromfile("./engine3d/models/test.obj")
-        model.ambientColor = vec3d(64, 224, 208)
+        if(e.keycode == 87):
+            self.vCamera.z += 1
+        elif(e.keycode == 83):
+            self.vCamera.z -= 1
+        elif(e.keycode == 68):
+            # d
+            self.vCamera.x += 1
+        elif(e.keycode == 65):
+            # a
+            self.vCamera.x -= 1
 
         # self.addmodeltoscene(model)
         # for x in range(4 * self.width):
         #     y = int(self.height/2 + self.height/4 * math.sin(x/80.0))
         #     self.img.put("#ffffff", (x//4, y))
-
-        self.addmodeltoscene(model)
 
     def addmodeltoscene(self, model):
         self.m = model
