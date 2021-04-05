@@ -176,7 +176,7 @@ def matQuickInverse(m: mat4x4) -> mat4x4:
     return matrix
 
 
-def MultiplyMatrixVector(i: vec3d, matrix: mat4x4) -> vec3d:
+def mulVecMat(i: vec3d, matrix: mat4x4) -> vec3d:
     output = vec3d(0.0, 0.0, 0.0, 0.0)
     m = matrix.mat
     output.x = i.x * m[0][0] + i.y * m[1][0] + i.z * m[2][0] + i.w*m[3][0]
@@ -190,6 +190,97 @@ def MultiplyMatrixVector(i: vec3d, matrix: mat4x4) -> vec3d:
     #     output.z /= w
 
     return output
+
+
+def vecIntersectPlane(plane_point: vec3d, plane_normal: vec3d, lineStart: vec3d, lineEnd: vec3d) -> vec3d:
+    # returns vector if the line crosses plane
+    # plane_point is a point on the plane
+    # plane normal is the plane's normal
+    # together they can describe the plane
+    plane_normal = vec_normalize(plane_normal)
+    plane_d = -dot(plane_normal, plane_point)
+    ad = dot(lineStart, plane_normal)
+    bd = dot(lineEnd, plane_normal)
+    t = (-plane_d-ad) / (bd-ad)
+    lineStartToEnd = vec_sub(lineEnd, lineStart)
+    lineToIntersect = vec_mul(lineStartToEnd, t)
+    return vec_add(lineStart, lineToIntersect)
+
+
+def dist(p, plane_n, plane_p):
+    # returns distance between point p and the plane made by normal n and a point on the plane (plane_p)
+    # n = vec_normalize(p)
+    return (plane_n.x*p.x+plane_n.y*p.y+plane_n.z*p.z - dot(plane_n, plane_p))
+
+
+def triangleClipAgainstPlane(plane_point: vec3d, plane_normal: vec3d, triangle_in: triangle) -> tuple:
+    plane_normal = vec_normalize(plane_normal)
+
+    inside_points = [0.0]*3
+    outside_points = [0.0]*3
+    nInsidePointCount = 0
+    nOutsidePointCount = 0
+
+    d0 = dist(triangle_in.vertices[0], plane_normal, plane_point)
+    d1 = dist(triangle_in.vertices[1], plane_normal, plane_point)
+    d2 = dist(triangle_in.vertices[2], plane_normal, plane_point)
+
+    if(d0 >= 0):
+        inside_points[nInsidePointCount] = triangle_in.vertices[0]
+        nInsidePointCount += 1
+    else:
+        outside_points[nOutsidePointCount] = triangle_in.vertices[0]
+        nOutsidePointCount += 1
+
+    if(d1 >= 0):
+        inside_points[nInsidePointCount] = triangle_in.vertices[1]
+        nInsidePointCount += 1
+    else:
+        outside_points[nOutsidePointCount] = triangle_in.vertices[1]
+        nOutsidePointCount += 1
+    if(d2 >= 0):
+        inside_points[nInsidePointCount] = triangle_in.vertices[2]
+        nInsidePointCount += 1
+    else:
+        outside_points[nOutsidePointCount] = triangle_in.vertices[2]
+        nOutsidePointCount += 1
+
+    if(nInsidePointCount == 0):
+        return (0, 0)
+    if(nInsidePointCount == 3):
+        triangle_in.color = vec3d(255, 255, 255)
+        return (1, triangle_in)
+
+    if(nInsidePointCount == 1 and nOutsidePointCount == 2):
+        # clip to new triangle
+        v0 = inside_points[0]
+
+        v1 = vecIntersectPlane(plane_point, plane_normal,
+                               inside_points[0], outside_points[0])
+        v2 = vecIntersectPlane(plane_point, plane_normal,
+                               inside_points[0], outside_points[1])
+        tout1 = triangle(v0, v1, v2)
+        tout1.color = vec3d(0, 0, 255)  # triangle_in.color
+        return (1, tout1)
+
+    if(nInsidePointCount == 2 and nOutsidePointCount == 1):
+        # clip to quad (2 new triangles)
+        v0 = inside_points[0]
+        v1 = inside_points[1]
+        v2 = vecIntersectPlane(plane_point, plane_normal,
+                               inside_points[0], outside_points[0])
+
+        v3 = inside_points[1]
+        v4 = v2
+        v5 = vecIntersectPlane(plane_point, plane_normal,
+                               inside_points[1], outside_points[0])
+
+        tout1 = triangle(v0, v1, v2)
+        tout2 = triangle(v3, v4, v5)
+        tout1.color = vec3d(0, 255, 0)  # triangle_in.color
+        tout2.color = vec3d(255, 0, 0)  # triangle_in.color
+
+        return (2, tout1, tout2)
 
 
 def makeMatRotationY(angleRad: float) -> mat4x4:
@@ -318,8 +409,9 @@ class Engine(tk.Canvas):
         self.vLookDir = vec3d(0.0, 0.0, 0.0)
 
         self.yaw = 0.0
+        self.pitch = 0.0
 
-        self.vPointLight = vec3d(0.0, 0.0, -1.0)
+        self.vPointLight = vec3d(0.0, -5.0, -1.0)
 
         self.fillDetail = 5     # scanline resolution
 
@@ -338,7 +430,7 @@ class Engine(tk.Canvas):
     def drawline(self, x1, y1, x2, y2, **kwargs):
         self.create_line(x1, y1, x2, y2, **kwargs)
 
-    def drawtriangle(self, tri, **kwargs):
+    def drawtriangle(self, tri: triangle, **kwargs):
         # draw a triangle in clockwise fashion
         # each triangle has 3 vertices
         self.drawline(tri.vertices[0].x, tri.vertices[0].y,
@@ -428,23 +520,23 @@ class Engine(tk.Canvas):
         for t in self.m.tris:
             triTransformed = triangle([0, 0, 0], [0, 0, 0], [0, 0, 0])
 
-            triTransformed.vertices[0] = MultiplyMatrixVector(
+            triTransformed.vertices[0] = mulVecMat(
                 t.vertices[0], self.matWorld)
-            triTransformed.vertices[1] = MultiplyMatrixVector(
+            triTransformed.vertices[1] = mulVecMat(
                 t.vertices[1], self.matWorld)
-            triTransformed.vertices[2] = MultiplyMatrixVector(
+            triTransformed.vertices[2] = mulVecMat(
                 t.vertices[2], self.matWorld)
 
-            # tout0 = MultiplyMatrixVector(t.vertices[0], self.matRotZ)
-            # tout1 = MultiplyMatrixVector(t.vertices[1], self.matRotZ)
-            # tout2 = MultiplyMatrixVector(t.vertices[2], self.matRotZ)
+            # tout0 = mulVecMat(t.vertices[0], self.matRotZ)
+            # tout1 = mulVecMat(t.vertices[1], self.matRotZ)
+            # tout2 = mulVecMat(t.vertices[2], self.matRotZ)
 
             # triRotZ = triangle(
             #     tout0, tout1, tout2)
 
-            # tout0 = MultiplyMatrixVector(triRotZ.vertices[0], self.matRotX)
-            # tout1 = MultiplyMatrixVector(triRotZ.vertices[1], self.matRotX)
-            # tout2 = MultiplyMatrixVector(triRotZ.vertices[2], self.matRotX)
+            # tout0 = mulVecMat(triRotZ.vertices[0], self.matRotX)
+            # tout1 = mulVecMat(triRotZ.vertices[1], self.matRotX)
+            # tout2 = mulVecMat(triRotZ.vertices[2], self.matRotX)
 
             # triRotZX = triangle(
             #     tout0, tout1, tout2)
@@ -489,45 +581,63 @@ class Engine(tk.Canvas):
 
                 triViewed = triangle((0, 0, 0), (0, 0, 0), (0, 0, 0))
 
-                triViewed.vertices[0] = MultiplyMatrixVector(
+                triViewed.vertices[0] = mulVecMat(
                     triTransformed.vertices[0], self.matView)
-                triViewed.vertices[1] = MultiplyMatrixVector(
+                triViewed.vertices[1] = mulVecMat(
                     triTransformed.vertices[1], self.matView)
-                triViewed.vertices[2] = MultiplyMatrixVector(
+                triViewed.vertices[2] = mulVecMat(
                     triTransformed.vertices[2], self.matView)
-                # project triangle to 2d space
-                triProjected.vertices[0] = MultiplyMatrixVector(
-                    triViewed.vertices[0], self.matProj)
-                triProjected.vertices[1] = MultiplyMatrixVector(
-                    triViewed.vertices[1], self.matProj)
-                triProjected.vertices[2] = MultiplyMatrixVector(
-                    triViewed.vertices[2], self.matProj)
 
-                triProjected.vertices[0] = vec_div(
-                    triProjected.vertices[0], triProjected.vertices[0].w)
-                triProjected.vertices[1] = vec_div(
-                    triProjected.vertices[1], triProjected.vertices[1].w)
-                triProjected.vertices[2] = vec_div(
-                    triProjected.vertices[2], triProjected.vertices[2].w)
+                nClippedTris = 0
+                nClippedTris = triangleClipAgainstPlane(
+                    vec3d(0, 0, 2.1), vec3d(0, 0, 1), triViewed)
 
-                # put it into view
-                vOffsetView = vec3d(1, 1, 0)
-                triProjected.vertices[0] = vec_add(
-                    triProjected.vertices[0], vOffsetView)
-                triProjected.vertices[1] = vec_add(
-                    triProjected.vertices[1], vOffsetView)
-                triProjected.vertices[2] = vec_add(
-                    triProjected.vertices[2], vOffsetView)
+                clippedTriangles = []
+                if(nClippedTris[0] >= 1):
+                    clippedTriangles = nClippedTris[1:]
+                # print(f"len clipped tris:{nClippedTris[0]}")
 
-                # scale into view
-                triProjected.vertices[0].x *= self.hWidth
-                triProjected.vertices[0].y *= self.hHeight
-                triProjected.vertices[1].x *= self.hWidth
-                triProjected.vertices[1].y *= self.hHeight
-                triProjected.vertices[2].x *= self.hWidth
-                triProjected.vertices[2].y *= self.hHeight
+                if(nClippedTris[0] == 2):
+                    a = 1
 
-                trianglesToRaster.append(triProjected)
+                for clippedTriangle in clippedTriangles:
+                    # project triangle to 2d space
+
+                    triProjected.vertices[0] = mulVecMat(
+                        clippedTriangle.vertices[0], self.matProj)
+                    triProjected.vertices[1] = mulVecMat(
+                        clippedTriangle.vertices[1], self.matProj)
+                    triProjected.vertices[2] = mulVecMat(
+                        clippedTriangle.vertices[2], self.matProj)
+
+                    triProjected.vertices[0] = vec_div(
+                        triProjected.vertices[0], triProjected.vertices[0].w)
+                    triProjected.vertices[1] = vec_div(
+                        triProjected.vertices[1], triProjected.vertices[1].w)
+                    triProjected.vertices[2] = vec_div(
+                        triProjected.vertices[2], triProjected.vertices[2].w)
+
+                    # put it into view
+                    vOffsetView = vec3d(1, 1, 0)
+                    triProjected.vertices[0] = vec_add(
+                        triProjected.vertices[0], vOffsetView)
+                    triProjected.vertices[1] = vec_add(
+                        triProjected.vertices[1], vOffsetView)
+                    triProjected.vertices[2] = vec_add(
+                        triProjected.vertices[2], vOffsetView)
+
+                    # scale into view
+                    triProjected.vertices[0].x *= self.hWidth
+                    triProjected.vertices[0].y *= self.hHeight
+                    triProjected.vertices[1].x *= self.hWidth
+                    triProjected.vertices[1].y *= self.hHeight
+                    triProjected.vertices[2].x *= self.hWidth
+                    triProjected.vertices[2].y *= self.hHeight
+
+                    # triProjected.color = copy(triViewed.color)
+                    triProjected.color = clippedTriangle.color
+
+                    trianglesToRaster.append(triProjected)
 
         # sort triangles in z axis for painters rendering
         trianglesToRaster = sorted(
@@ -536,6 +646,8 @@ class Engine(tk.Canvas):
         for t in trianglesToRaster:
             self.create_polygon(t.vertices[0].x, t.vertices[0].y, t.vertices[1].x,
                                 t.vertices[1].y, t.vertices[2].x, t.vertices[2].y, fill=f"#{t.color.x:02x}{t.color.y:02x}{t.color.z:02x}", tag="triangle")
+
+            self.drawtriangle(t, fill="black")
 
     def draw(self):
         pass
@@ -564,11 +676,12 @@ class Engine(tk.Canvas):
         self.matWorld = matmatmul(self.matWorld, self.matTrans)
 
         # self.vLookDir = vec3d(0, 0, 1)
-        vUp = vec3d(0, -1, 0)
+        vUp = vec3d(0, 1, 0)
         # vTarget = vec_add(self.vCamera, self.vLookDir)
         vTarget = vec3d(0, 0, 1)
         matCameraRot = makeMatRotationY(self.yaw)
-        self.vLookDir = MultiplyMatrixVector(vTarget, matCameraRot)
+        matCameraRot = matmatmul(matCameraRot, makeMatRotationX(self.pitch))
+        self.vLookDir = mulVecMat(vTarget, matCameraRot)
         vTarget = vec_add(self.vCamera, self.vLookDir)
 
         matCamera = matPointAt(self.vCamera, vTarget, vUp)
@@ -580,20 +693,24 @@ class Engine(tk.Canvas):
 
         self.text_fps_id = self.create_text(
             0, 10, text=f"{1/t2:3.0f} fps", anchor="w", fill="#fff", font=("TKDefaultFont", 12))
+
+        # self.vPointLight.x = 2*math.sin(t1)
+        # self.vPointLight.y = 2*math.cos(t1)
         self.after(max(1, int(t2*1000)), self.perform_actions)
         # self.update_idletasks()
 
     def on_key_press(self, e):
         # model = self.create_cube()
-        print(e)
+        # print(e)
         if(e.keycode == 13):
             model = mesh()
-            model.loadmodelfromfile("./engine3d/models/suzanne.obj")
+            model.loadmodelfromfile("./engine3d/models/test.obj")
             model.ambientColor = vec3d(64, 224, 208)
+            model.ambientColor = vec3d(255, 255, 255)
             self.addmodeltoscene(model)
             return
 
-        vForward = vec_mul(self.vLookDir, 1.0)
+        vForward = vec_mul(self.vLookDir, .25)
 
         if(e.keycode == 40):
             # key down
@@ -609,23 +726,28 @@ class Engine(tk.Canvas):
             self.vCamera.x += 1
         elif(e.keycode == 68):
             # D
-            self.yaw += .1
+            self.yaw -= .1
         elif(e.keycode == 65):
             # A
-            self.yaw -= .1
+            self.yaw += .1
 
         elif(e.keycode == 87):
             # W
             self.vCamera = vec_add(self.vCamera, vForward)
-
         elif(e.keycode == 83):
             # S
             self.vCamera = vec_sub(self.vCamera, vForward)
-
+        elif(e.keycode == 33):
+            # pgup
+            self.pitch += .1
+        elif(e.keycode == 34):
+            # pgdown (tilt camera)
+            self.pitch -= .1
         elif(e.char == "r"):
             # reset
             self.vCamera = vec3d(0, 0, 0)
             self.yaw = 0
+            self.pitch = 0
 
             # self.addmodeltoscene(model)
             # for x in range(4 * self.width):
