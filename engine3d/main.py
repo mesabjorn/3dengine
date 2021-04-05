@@ -4,8 +4,6 @@ import math
 # import datetime
 import functools
 from copy import deepcopy, copy
-# from tkinter import PhotoImage
-
 # inspired on the cpp tutorail from https://www.youtube.com/watch?v=ih20l3pJoeU
 
 
@@ -70,7 +68,7 @@ class mesh:
         # print(self.tris)
 
     def loadmodelfromfile(self, file):
-        # load .obj file
+        # load wavefront obj file
         with open(file, "r") as f:
             v = []
             tris = []
@@ -102,6 +100,16 @@ class mat4x4:
     def __init__(self):
         self.mat = [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+
+
+def rgbToHex(color: vec3d) -> str:
+    c = vec3d(color.x, color.y, color.z)
+
+    c.x = min(255, max(0, c.x))
+    c.y = min(255, max(0, c.y))
+    c.z = min(255, max(0, c.z))
+
+    return f"#{c.x:02x}{c.y:02x}{c.z:02x}"
 
 
 def matmatmul(m1: mat4x4, m2: mat4x4) -> mat4x4:
@@ -248,7 +256,7 @@ def triangleClipAgainstPlane(plane_point: vec3d, plane_normal: vec3d, triangle_i
     if(nInsidePointCount == 0):
         return (0, 0)
     if(nInsidePointCount == 3):
-        triangle_in.color = vec3d(255, 255, 255)
+        # triangle_in.color = vec3d(255, 255, 255)
         return (1, triangle_in)
 
     if(nInsidePointCount == 1 and nOutsidePointCount == 2):
@@ -260,7 +268,9 @@ def triangleClipAgainstPlane(plane_point: vec3d, plane_normal: vec3d, triangle_i
         v2 = vecIntersectPlane(plane_point, plane_normal,
                                inside_points[0], outside_points[1])
         tout1 = triangle(v0, v1, v2)
-        tout1.color = vec3d(0, 0, 255)  # triangle_in.color
+
+        tout1.color = vec_add(triangle_in.color, vec3d(0, 0, 0))
+
         return (1, tout1)
 
     if(nInsidePointCount == 2 and nOutsidePointCount == 1):
@@ -277,8 +287,8 @@ def triangleClipAgainstPlane(plane_point: vec3d, plane_normal: vec3d, triangle_i
 
         tout1 = triangle(v0, v1, v2)
         tout2 = triangle(v3, v4, v5)
-        tout1.color = vec3d(0, 255, 0)  # triangle_in.color
-        tout2.color = vec3d(255, 0, 0)  # triangle_in.color
+        tout1.color = vec_add(triangle_in.color, vec3d(0, 0, 0))
+        tout2.color = vec_add(triangle_in.color, vec3d(0, 0, 0))
 
         return (2, tout1, tout2)
 
@@ -386,6 +396,9 @@ def makeMatIdentity() -> mat4x4:
     return m
 
 
+CAMERA_INIT = vec3d(60.0, -16, 25.0)
+
+
 class Engine(tk.Canvas):
     def __init__(self, width=800, height=600):
         super().__init__(width=800, height=600, background="black", highlightthickness=0)
@@ -405,18 +418,19 @@ class Engine(tk.Canvas):
 
         self.tstart = time.perf_counter()
 
-        self.vCamera = vec3d(0.0, 0.0, 0.0)
+        self.vCamera = CAMERA_INIT
         self.vLookDir = vec3d(0.0, 0.0, 0.0)
 
         self.yaw = 0.0
         self.pitch = 0.0
 
-        self.vPointLight = vec3d(0.0, -5.0, -1.0)
+        self.vPointLight = vec3d(-6, -15.0, -50)
 
-        self.fillDetail = 5     # scanline resolution
+        # self.fillDetail = 5     # scanline resolution
 
         self.text_fps_id = self.create_text(
             50, 10, text=f"Press enter key to start", anchor="w", fill="#fff", font=("TKDefaultFont", 15))
+
         # right facing snake, 3 body elements, 20px width
         self.bind_all("<Key>", self.on_key_press)
 
@@ -566,7 +580,7 @@ class Engine(tk.Canvas):
 
                 # compute correct color
                 dp = dot(normal, vec_normalize(self.vPointLight))
-
+                # dp = 1
                 color = copy(self.m.ambientColor)
 
                 color = vec_mul(color, dp)
@@ -574,10 +588,9 @@ class Engine(tk.Canvas):
                 color.y = int(color.y)   # g channel
                 color.z = int(color.z)   # b channel
 
-                color.x = max(color.x, 0)
-                color.y = max(color.y, 0)
-                color.z = max(color.z, 0)
-                triProjected.color = color
+                # color.x = max(color.x, 0)
+                # color.y = max(color.y, 0)
+                # color.z = max(color.z, 0)
 
                 triViewed = triangle((0, 0, 0), (0, 0, 0), (0, 0, 0))
 
@@ -588,20 +601,19 @@ class Engine(tk.Canvas):
                 triViewed.vertices[2] = mulVecMat(
                     triTransformed.vertices[2], self.matView)
 
-                nClippedTris = 0
+                triViewed.color = color
+
                 nClippedTris = triangleClipAgainstPlane(
-                    vec3d(0, 0, 2.1), vec3d(0, 0, 1), triViewed)
+                    vec3d(0, 0, .1), vec3d(0, 0, 1.0), triViewed)
 
                 clippedTriangles = []
                 if(nClippedTris[0] >= 1):
                     clippedTriangles = nClippedTris[1:]
                 # print(f"len clipped tris:{nClippedTris[0]}")
 
-                if(nClippedTris[0] == 2):
-                    a = 1
-
                 for clippedTriangle in clippedTriangles:
                     # project triangle to 2d space
+                    triProjected = triangle((0, 0, 0), (0, 0, 0), (0, 0, 0))
 
                     triProjected.vertices[0] = mulVecMat(
                         clippedTriangle.vertices[0], self.matProj)
@@ -617,7 +629,14 @@ class Engine(tk.Canvas):
                     triProjected.vertices[2] = vec_div(
                         triProjected.vertices[2], triProjected.vertices[2].w)
 
-                    # put it into view
+                    triProjected.vertices[0].x *= -1
+                    triProjected.vertices[0].y *= -1
+                    triProjected.vertices[1].x *= -1
+                    triProjected.vertices[1].y *= -1
+                    triProjected.vertices[2].x *= -1
+                    triProjected.vertices[2].y *= -1
+
+                    # put it into view (offset it into x,y direction)
                     vOffsetView = vec3d(1, 1, 0)
                     triProjected.vertices[0] = vec_add(
                         triProjected.vertices[0], vOffsetView)
@@ -644,10 +663,40 @@ class Engine(tk.Canvas):
             trianglesToRaster, key=functools.cmp_to_key(sort_triangles_by_z))
 
         for t in trianglesToRaster:
-            self.create_polygon(t.vertices[0].x, t.vertices[0].y, t.vertices[1].x,
-                                t.vertices[1].y, t.vertices[2].x, t.vertices[2].y, fill=f"#{t.color.x:02x}{t.color.y:02x}{t.color.z:02x}", tag="triangle")
+            listTriangles = []
+            listTriangles.append(t)
+            nNewTriangles = 1
+            for p in range(0, 4):
+                nTrisToAdd = 0
+                while nNewTriangles > 0:
+                    test = listTriangles[0]
+                    del listTriangles[0]
+                    nNewTriangles -= 1
 
-            self.drawtriangle(t, fill="black")
+                    if(p == 0):
+                        nTrisToAdd = triangleClipAgainstPlane(
+                            vec3d(0, 0, 0), vec3d(0, 1, 0), test)
+                    elif(p == 1):
+                        nTrisToAdd = triangleClipAgainstPlane(
+                            vec3d(0, self.height-1, 0), vec3d(0, -1, 0), test)
+                    elif(p == 2):
+                        nTrisToAdd = triangleClipAgainstPlane(
+                            vec3d(0, 0, 0), vec3d(1, 0, 0), test)
+                    elif(p == 3):
+                        nTrisToAdd = triangleClipAgainstPlane(
+                            vec3d(self.width-1, 0, 0), vec3d(-1, 0, 0), test)
+
+                    if(nTrisToAdd[0] >= 1):
+                        for n in nTrisToAdd[1:]:
+                            listTriangles.append(n)
+                nNewTriangles = len(listTriangles)
+
+            for t in listTriangles:
+                # t.color = vec3d(255, 255, 255)
+                self.create_polygon(t.vertices[0].x, t.vertices[0].y, t.vertices[1].x,
+                                    t.vertices[1].y, t.vertices[2].x, t.vertices[2].y, fill=rgbToHex(t.color), tag="triangle")
+
+                # self.drawtriangle(t, fill="black")      # enable wireframe mode
 
     def draw(self):
         pass
@@ -676,12 +725,15 @@ class Engine(tk.Canvas):
         self.matWorld = matmatmul(self.matWorld, self.matTrans)
 
         # self.vLookDir = vec3d(0, 0, 1)
-        vUp = vec3d(0, 1, 0)
+        vUp = vec3d(0, -1, 0)
         # vTarget = vec_add(self.vCamera, self.vLookDir)
         vTarget = vec3d(0, 0, 1)
-        matCameraRot = makeMatRotationY(self.yaw)
-        matCameraRot = matmatmul(matCameraRot, makeMatRotationX(self.pitch))
-        self.vLookDir = mulVecMat(vTarget, matCameraRot)
+        matCameraRotX = makeMatRotationX(self.pitch)
+        matCameraRotY = makeMatRotationY(self.yaw)
+        matCameraRotXY = matmatmul(matCameraRotX, matCameraRotY)
+        # matCameraRot = matmatmul(matCameraRot, makeMatRotationX(self.pitch))
+        self.vLookDir = mulVecMat(vTarget, matCameraRotXY)
+        # self.vLookDir = mulVecMat(self.vLookDir, matCameraRotX)
         vTarget = vec_add(self.vCamera, self.vLookDir)
 
         matCamera = matPointAt(self.vCamera, vTarget, vUp)
@@ -694,8 +746,14 @@ class Engine(tk.Canvas):
         self.text_fps_id = self.create_text(
             0, 10, text=f"{1/t2:3.0f} fps", anchor="w", fill="#fff", font=("TKDefaultFont", 12))
 
-        # self.vPointLight.x = 2*math.sin(t1)
-        # self.vPointLight.y = 2*math.cos(t1)
+        self.camerapostext = self.create_text(
+            0, 20, text=f"camera (xyz)= {self.vCamera.x}, {self.vCamera.y}, {self.vCamera.z}", anchor="w", fill="#fff", font=("TKDefaultFont", 10))
+
+        self.camerapostext = self.create_text(
+            0, 30, text=f"camera (pitch,yaw,roll) = {self.pitch}, {self.yaw}, {0}", anchor="w", fill="#fff", font=("TKDefaultFont", 10))
+
+        # self.vPointLight.x += math.sin(t1)
+        # self.vPointLight.y += math.cos(t1)
         self.after(max(1, int(t2*1000)), self.perform_actions)
         # self.update_idletasks()
 
@@ -704,13 +762,13 @@ class Engine(tk.Canvas):
         # print(e)
         if(e.keycode == 13):
             model = mesh()
-            model.loadmodelfromfile("./engine3d/models/test.obj")
-            model.ambientColor = vec3d(64, 224, 208)
+            model.loadmodelfromfile("./engine3d/models/lowpolylevel.obj")
+            # model.ambientColor = vec3d(64, 224, 208)
             model.ambientColor = vec3d(255, 255, 255)
             self.addmodeltoscene(model)
             return
 
-        vForward = vec_mul(self.vLookDir, .25)
+        vForward = vec_mul(self.vLookDir, 1)
 
         if(e.keycode == 40):
             # key down
@@ -727,9 +785,16 @@ class Engine(tk.Canvas):
         elif(e.keycode == 68):
             # D
             self.yaw -= .1
+            # self.yaw %= 6.28
+            if(self.yaw <= 0):
+                self.yaw += 6.3
+
         elif(e.keycode == 65):
             # A
             self.yaw += .1
+            # self.yaw %= 6.28
+            if(self.yaw >= 6.3):
+                self.yaw -= 6.3
 
         elif(e.keycode == 87):
             # W
@@ -740,12 +805,14 @@ class Engine(tk.Canvas):
         elif(e.keycode == 33):
             # pgup
             self.pitch += .1
+            # self.pitch %= 6.28
         elif(e.keycode == 34):
             # pgdown (tilt camera)
             self.pitch -= .1
+            # self.pitch %= 6.28
         elif(e.char == "r"):
             # reset
-            self.vCamera = vec3d(0, 0, 0)
+            self.vCamera = CAMERA_INIT
             self.yaw = 0
             self.pitch = 0
 
