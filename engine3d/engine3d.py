@@ -4,11 +4,11 @@ import math
 # import datetime
 import functools
 from copy import deepcopy, copy
-from tkinter.constants import LAST
+
 # inspired on the cpp tutorail from https://www.youtube.com/watch?v=ih20l3pJoeU
 from veclib import vec3d, mat4x4, triangle, mesh, rgbToHex, matmatmul, matPointAt, matQuickInverse, mulVecMat, triangleClipAgainstPlane, makeMatRotationX, makeMatRotationY, makeMatRotationZ, makeMatTranslation, dot, cross, makeMatProjection, vec_add, vec_sub, vec_mul, vec_div, vec_len, vec_normalize, makeMatIdentity, sort_triangles_by_z
 
-from player import Camera, Player, SceneObject
+from player import Player, SceneObject
 
 # CAMERA_INIT = vec3d(60.0, -16, 25.0)
 
@@ -38,7 +38,7 @@ class Engine(tk.Canvas):
         # self.yaw = 0.0
         # self.pitch = 0.0
 
-        self.Player = Player(60, -20, 25)
+        self.Player = Player(None, (60, -20, 25))
         self.Player.Camera.setup_viewport(self.aspectratio)
 
         self.vPointLight = vec3d(-6, -15.0, -50)
@@ -152,7 +152,9 @@ class Engine(tk.Canvas):
 
     def drawmeshes(self):
         for scene_object in self.scene_objects:
-            self.drawmesh(scene_object)
+            scene_object.update(time.perf_counter())
+            scene_object.draw(time.perf_counter(), self)
+            # self.drawmesh(scene_object)
 
     def drawmesh(self, scene_object: SceneObject):
         trianglesToRaster = []
@@ -338,10 +340,8 @@ class Engine(tk.Canvas):
 
                 # self.drawtriangle(t, fill="white")      # enable wireframe mode
 
-    def draw(self):
-        pass
+        # def setup_viewport(self):
 
-    # def setup_viewport(self):
     #     fNear = 0.1
     #     fFar = 1000.0
     #     fFov = 90.0         # degrees FOV
@@ -353,68 +353,51 @@ class Engine(tk.Canvas):
         self.delete(tk.ALL)
         theta = 0  # t1*0.5
 
-        self.matRotZ = makeMatRotationZ(theta)
-        self.matRotX = makeMatRotationX(theta)
-        self.matRotY = makeMatRotationY(theta)
-
-        self.matTrans = makeMatTranslation(0, 0, 0)
+        # self.matRotZ = makeMatRotationZ(theta)
+        # self.matRotX = makeMatRotationX(theta)
+        # self.matRotY = makeMatRotationY(theta)
+        # self.matTrans = makeMatTranslation(0, 0, 0)
 
         self.matWorld = makeMatIdentity()
-        self.matWorld = matmatmul(self.matRotY, self.matRotY)
-        self.matWorld = matmatmul(self.matRotY, self.matRotZ)
-        self.matWorld = matmatmul(self.matWorld, self.matTrans)
-
-        # # self.vLookDir = vec3d(0, 0, 1)
-        # vUp = vec3d(0, -1, 0)
-        # # vTarget = vec_add(self.vCamera, self.vLookDir)
-        # vTarget = vec3d(0, 0, 1)
-        # matCameraRotX = makeMatRotationX(self.pitch)
-        # matCameraRotY = makeMatRotationY(self.yaw)
-        # matCameraRotXY = matmatmul(matCameraRotX, matCameraRotY)
-        # # matCameraRot = matmatmul(matCameraRot, makeMatRotationX(self.pitch))
-        # self.vLookDir = mulVecMat(vTarget, matCameraRotXY)
-        # # self.vLookDir = mulVecMat(self.vLookDir, matCameraRotX)
-        # vTarget = vec_add(self.vCamera, self.vLookDir)
-
-        # matCamera = matPointAt(self.vCamera, vTarget, vUp)
-        # self.matView = matQuickInverse(matCamera)
+        # self.matWorld = matmatmul(self.matRotZ, self.matRotX)
+        # self.matWorld = matmatmul(self.matWorld, self.matTrans)
 
         self.Player.Camera.setCamera()
-
         self.drawmeshes()
 
         t2 = time.perf_counter()-t1             # frame draw time
-
         self.text_fps_id = self.create_text(
             0, 10, text=f"{1/t2:3.0f} fps", anchor="w", fill="#fff", font=("TKDefaultFont", 12))
-
         self.camerapostext = self.create_text(
             0, 20, text=f"camera (xyz)= {self.Player.Camera.vPos.x}, {self.Player.Camera.vPos.y}, {self.Player.Camera.vPos.z}", anchor="w", fill="#fff", font=("TKDefaultFont", 10))
-
         self.camerapostext = self.create_text(
             0, 30, text=f"camera (pitch,yaw,roll) = {self.Player.Camera.pitch:.2f}, {self.Player.Camera.yaw:.2f}, {0}", anchor="w", fill="#fff", font=("TKDefaultFont", 10))
 
         # self.vPointLight.x += math.sin(t1)
         # self.vPointLight.y += math.cos(t1)
         # self.after(max(1, int(t2*1000)), self.perform_actions)
-        self.after(100, self.perform_actions)
-        # self.update_idletasks()
+        self.after(40, self.perform_actions)
 
     def on_key_press(self, e):
         # model = self.create_cube()
         # print(e)
         if(e.keycode == 13):
 
-            S = SceneObject(0, 0, -5, "lowpolylevel.obj")
+            # S = SceneObject(0, 0, -5, "lowpolylevel.obj")
+            S = SceneObject("lowpolylevel.obj", (0, 0, -5))
             # model.loadmodelfromfile("./engine3d/models/lowpolylevel.obj")
             # model.ambientColor = vec3d(64, 224, 208)
 
             self.addModelToScene(S)
 
-            S2 = SceneObject(0, -5, 0, "box.obj")
+            S2 = SceneObject("box.obj", (0, -5, 0), vScale=(5, 5, 5))
             S2.rotate = True
+            S2.myupdatefunction = SceneObject.bounce
+            S2.ambientColor = vec3d(64, 224, 208)
             self.addModelToScene(S2)
-            self.addModelToScene(SceneObject(5, -5, 5, "box.obj"))
+
+            S3 = SceneObject("box.obj", (5, -5, 0), vScale=(1, 1, 1))
+            self.addModelToScene(S3)
 
             # model = mesh()
             # model.loadmodelfromfile("./engine3d/models/box.obj")
